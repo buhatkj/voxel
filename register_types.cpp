@@ -82,6 +82,7 @@
 #include "generators/simple/voxel_generator_image.h"
 #include "generators/simple/voxel_generator_noise.h"
 #include "generators/simple/voxel_generator_noise_2d.h"
+#include "generators/simple/voxel_generator_planet.h"
 #include "generators/simple/voxel_generator_waves.h"
 #endif
 
@@ -365,6 +366,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<VoxelGeneratorImage>();
 		ClassDB::register_class<VoxelGeneratorNoise2D>();
 		ClassDB::register_class<VoxelGeneratorNoise>();
+		ClassDB::register_class<VoxelGeneratorPlanet>();
 #endif
 
 #ifdef VOXEL_ENABLE_MESH_SDF
