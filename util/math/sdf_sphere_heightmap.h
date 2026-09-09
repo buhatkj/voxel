@@ -46,7 +46,10 @@ inline float sdf_sphere_heightmap(
 		float norm_x,
 		float norm_y
 ) {
-	const float d = Math::sqrt(x * x + y * y + z * z) + 0.0001f;
+	// TEDTODO: Does this have to be sqrt?  If so, could I use the classic quake fast sqrt approximation here?
+	// this gets called a lot, and I wanna call it like EVEN MORE....
+	// looks like this abstracts to just std::sqrt...which, that cant be the fastest??
+	const float d = /* Math::sqrt */ Math::Fast_Sqrt(x * x + y * y + z * z) + 0.0001f;
 	const float sd = d - r;
 	// Optimize when far enough from heightmap.
 	// This introduces a discontinuity but it should be ok for clamped storage
