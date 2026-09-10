@@ -163,6 +163,7 @@ public:
 	static const Depth DEFAULT_SDF_CHANNEL_DEPTH = DEPTH_16_BIT;
 	static const Depth DEFAULT_INDICES_CHANNEL_DEPTH = DEPTH_16_BIT;
 	static const Depth DEFAULT_WEIGHTS_CHANNEL_DEPTH = DEPTH_16_BIT;
+	static const Depth DEFAULT_DATA_CHANNEL_DEPTH = DEPTH_16_BIT;
 
 	// Limit was made explicit for serialization reasons, and also because there must be a reasonable one
 	static const uint32_t MAX_SIZE = 65535;

@@ -84,7 +84,8 @@ float VoxelGeneratorPlanet::get_factor() const {
 }
 
 int VoxelGeneratorPlanet::get_used_channels_mask() const {
-	return (1 << VoxelBuffer::CHANNEL_SDF);
+	return (1 << VoxelBuffer::CHANNEL_SDF) | (1 << VoxelBuffer::CHANNEL_DATA5) | (1 << VoxelBuffer::CHANNEL_DATA6) |
+		   (1 << VoxelBuffer::CHANNEL_DATA7);
 }
 
 VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::VoxelQueryData input) {
@@ -123,6 +124,25 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 						params.norm_y
 				);
 				out_buffer.set_voxel_f(sdf, x, y, z, VoxelBuffer::CHANNEL_SDF);
+
+				// Carry per-voxel metadata from the unused G, B and A channels of the heightmap.
+				float meta_g = 0.f;
+				float meta_b = 0.f;
+				float meta_a = 0.f;
+				sample_planet_metadata(
+						image,
+						gx,
+						gy,
+						gz,
+						params.norm_x,
+						params.norm_y,
+						meta_g,
+						meta_b,
+						meta_a
+				);
+				out_buffer.set_voxel_f(meta_g, x, y, z, VoxelBuffer::CHANNEL_DATA5);
+				out_buffer.set_voxel_f(meta_b, x, y, z, VoxelBuffer::CHANNEL_DATA6);
+				out_buffer.set_voxel_f(meta_a, x, y, z, VoxelBuffer::CHANNEL_DATA7);
 			}
 		} // for x
 	} // for z
@@ -160,6 +180,29 @@ VoxelSingleValue VoxelGeneratorPlanet::generate_single(Vector3i pos, unsigned in
 				params.norm_x,
 				params.norm_y
 		);
+	} else if (channel == VoxelBuffer::CHANNEL_DATA5 || channel == VoxelBuffer::CHANNEL_DATA6 ||
+			   channel == VoxelBuffer::CHANNEL_DATA7) {
+		float meta_g = 0.f;
+		float meta_b = 0.f;
+		float meta_a = 0.f;
+		sample_planet_metadata(
+				image,
+				float(pos.x),
+				float(pos.y),
+				float(pos.z),
+				params.norm_x,
+				params.norm_y,
+				meta_g,
+				meta_b,
+				meta_a
+		);
+		if (channel == VoxelBuffer::CHANNEL_DATA5) {
+			v.f = meta_g;
+		} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
+			v.f = meta_b;
+		} else {
+			v.f = meta_a;
+		}
 	} else {
 		v.i = 0;
 	}
@@ -204,6 +247,31 @@ void VoxelGeneratorPlanet::generate_series(
 					params.norm_x,
 					params.norm_y
 			);
+		}
+	} else if (channel == VoxelBuffer::CHANNEL_DATA5 || channel == VoxelBuffer::CHANNEL_DATA6 ||
+			   channel == VoxelBuffer::CHANNEL_DATA7) {
+		for (size_t i = 0; i < count; ++i) {
+			float meta_g = 0.f;
+			float meta_b = 0.f;
+			float meta_a = 0.f;
+			sample_planet_metadata(
+					image,
+					positions_x[i],
+					positions_y[i],
+					positions_z[i],
+					params.norm_x,
+					params.norm_y,
+					meta_g,
+					meta_b,
+					meta_a
+			);
+			if (channel == VoxelBuffer::CHANNEL_DATA5) {
+				out_values[i] = meta_g;
+			} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
+				out_values[i] = meta_b;
+			} else {
+				out_values[i] = meta_a;
+			}
 		}
 	} else {
 		for (size_t i = 0; i < count; ++i) {

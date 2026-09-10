@@ -72,6 +72,47 @@ inline float sdf_sphere_heightmap(
 	return sd - m * h;
 }
 
+// Samples the G, B and A channels of the heightmap image at the given position,
+// using the same spherical UV mapping as `sdf_sphere_heightmap`.
+// This is intended to carry per-voxel metadata (3 floats) derived from the
+// otherwise-unused color channels of the source image.
+inline void sample_planet_metadata(
+		const Image &im,
+		float x,
+		float y,
+		float z,
+		float norm_x,
+		float norm_y,
+		float &out_g,
+		float &out_b,
+		float &out_a
+) {
+	const float d = Math::Fast_Sqrt(x * x + y * y + z * z) + 0.0001f;
+	const float nx = x / d;
+	const float ny = y / d;
+	const float nz = z / d;
+	const float uvx = (-Math::atan2(nz, nx) * zylann::math::INV_TAU<float> + 0.5f) * norm_x;
+	const float ys = skew3(ny);
+	const float uvy = (-0.5f * ys + 0.5f) * norm_y;
+
+	const int im_w = im.get_width();
+	const int im_h = im.get_height();
+	const int x0 = int(Math::floor(uvx));
+	const int y0 = int(Math::floor(uvy));
+	const float xf = uvx - x0;
+	const float yf = uvy - y0;
+
+	// Read each corner pixel once and pull out the G, B and A components.
+	const Color c00 = im.get_pixel(math::wrap(x0, im_w), math::wrap(y0, im_h));
+	const Color c10 = im.get_pixel(math::wrap(x0 + 1, im_w), math::wrap(y0, im_h));
+	const Color c01 = im.get_pixel(math::wrap(x0, im_w), math::wrap(y0 + 1, im_h));
+	const Color c11 = im.get_pixel(math::wrap(x0 + 1, im_w), math::wrap(y0 + 1, im_h));
+
+	out_g = Math::lerp(Math::lerp(c00.g, c10.g, xf), Math::lerp(c01.g, c11.g, xf), yf);
+	out_b = Math::lerp(Math::lerp(c00.b, c10.b, xf), Math::lerp(c01.b, c11.b, xf), yf);
+	out_a = Math::lerp(Math::lerp(c00.a, c10.a, xf), Math::lerp(c01.a, c11.a, xf), yf);
+}
+
 } // namespace zylann::voxel
 
 #endif // VOXEL_SDF_SPHERE_HEIGHTMAP_H
