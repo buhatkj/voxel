@@ -232,6 +232,11 @@ float VoxelToolTerrain::_get_voxel_f(Vector3i pos) const {
 	return _terrain->get_storage().get_voxel_f(pos, _channel);
 }
 
+float VoxelToolTerrain::_get_voxel_f(Vector3i pos, VoxelBuffer::ChannelId channel) const {
+	ERR_FAIL_COND_V(_terrain == nullptr, 0);
+	return _terrain->get_storage().get_voxel_f(pos, channel);
+}
+
 void VoxelToolTerrain::_set_voxel(Vector3i pos, uint64_t v) {
 	ERR_FAIL_COND(_terrain == nullptr);
 	_terrain->get_storage().try_set_voxel(v, pos, _channel);

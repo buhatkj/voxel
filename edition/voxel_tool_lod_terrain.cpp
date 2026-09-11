@@ -302,6 +302,13 @@ float VoxelToolLodTerrain::_get_voxel_f(Vector3i pos) const {
 	return _terrain->get_storage().get_voxel(pos, _channel, defval).f;
 }
 
+float VoxelToolLodTerrain::_get_voxel_f(Vector3i pos, VoxelBuffer::ChannelId channel) const {
+	ERR_FAIL_COND_V(_terrain == nullptr, 0);
+	VoxelSingleValue defval;
+	defval.f = 0.f;
+	return _terrain->get_storage().get_voxel(pos, channel, defval).f;
+}
+
 void VoxelToolLodTerrain::_set_voxel(Vector3i pos, uint64_t v) {
 	ERR_FAIL_COND(_terrain == nullptr);
 	_terrain->get_storage().try_set_voxel(v, pos, _channel);

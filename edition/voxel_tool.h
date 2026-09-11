@@ -49,6 +49,10 @@ public:
 	uint64_t get_voxel(Vector3i pos) const;
 	float get_voxel_f(Vector3i pos) const;
 
+	// Returns the values of the three generic data channels (DATA5, DATA6, DATA7)
+	// for the voxel closest to the given position, as a Vector3 (x=DATA5, y=DATA6, z=DATA7).
+	Vector3 get_voxel_data_channels(Vector3 pos) const;
+
 	virtual float get_voxel_f_interpolated(const Vector3 pos) const;
 
 	float get_sdf_scale() const;
@@ -139,6 +143,9 @@ protected:
 	// They don't represent an edit, they only abstract the lower-level API
 	virtual uint64_t _get_voxel(Vector3i pos) const;
 	virtual float _get_voxel_f(Vector3i pos) const;
+	// Reads a specific channel at a position. The default implementation temporarily switches the
+	// active channel. Subclasses may override this to read a channel directly without the overhead.
+	virtual float _get_voxel_f(Vector3i pos, VoxelBuffer::ChannelId channel) const;
 	virtual void _set_voxel(Vector3i pos, uint64_t v);
 	virtual void _set_voxel_f(Vector3i pos, float v);
 	virtual void _post_edit(const Box3i &box);
@@ -166,6 +173,7 @@ private:
 
 	uint64_t _b_get_voxel(Vector3i pos);
 	float _b_get_voxel_f(Vector3i pos);
+	Vector3 _b_get_voxel_data_channels(Vector3 pos);
 	void _b_set_voxel(Vector3i pos, uint64_t v);
 	void _b_set_voxel_f(Vector3i pos, float v);
 	Ref<VoxelRaycastResult> _b_raycast(Vector3 pos, Vector3 dir, float max_distance, uint32_t collision_mask);
@@ -195,7 +203,9 @@ private:
 protected:
 	uint64_t _value = 0;
 	uint64_t _eraser_value = 0; // air
-	VoxelBuffer::ChannelId _channel = VoxelBuffer::CHANNEL_TYPE;
+	// Mutable because the default `_get_voxel_f(pos, channel)` implementation temporarily switches the
+	// active channel to read a specific one, even from const methods.
+	mutable VoxelBuffer::ChannelId _channel = VoxelBuffer::CHANNEL_TYPE;
 	float _sdf_scale = 1.f;
 	float _sdf_strength = 1.f;
 	Mode _mode = MODE_ADD;

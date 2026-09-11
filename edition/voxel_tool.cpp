@@ -119,6 +119,14 @@ float VoxelTool::get_voxel_f(Vector3i pos) const {
 	return _get_voxel_f(pos);
 }
 
+Vector3 VoxelTool::get_voxel_data_channels(Vector3 pos) const {
+	const Vector3i ipos = math::round_to_int(pos);
+	const float d5 = _get_voxel_f(ipos, VoxelBuffer::CHANNEL_DATA5);
+	const float d6 = _get_voxel_f(ipos, VoxelBuffer::CHANNEL_DATA6);
+	const float d7 = _get_voxel_f(ipos, VoxelBuffer::CHANNEL_DATA7);
+	return Vector3(d5, d6, d7);
+}
+
 float VoxelTool::get_voxel_f_interpolated(const Vector3 pos) const {
 	// Default, slow implementation
 	return get_sdf_interpolated([this](Vector3i ipos) { return _get_voxel_f(ipos); }, pos);
@@ -166,6 +174,16 @@ uint64_t VoxelTool::_get_voxel(Vector3i pos) const {
 float VoxelTool::_get_voxel_f(Vector3i pos) const {
 	ERR_PRINT("Not implemented");
 	return 0;
+}
+
+float VoxelTool::_get_voxel_f(Vector3i pos, VoxelBuffer::ChannelId channel) const {
+	// Default implementation: temporarily switch the active channel and read.
+	// Subclasses should override this to read the channel directly.
+	const VoxelBuffer::ChannelId prev_channel = _channel;
+	_channel = channel;
+	const float value = _get_voxel_f(pos);
+	_channel = prev_channel;
+	return value;
 }
 
 void VoxelTool::_set_voxel(Vector3i pos, uint64_t v) {
@@ -610,6 +628,10 @@ float VoxelTool::_b_get_voxel_f(Vector3i pos) {
 	return get_voxel_f(pos);
 }
 
+Vector3 VoxelTool::_b_get_voxel_data_channels(Vector3 pos) {
+	return get_voxel_data_channels(pos);
+}
+
 void VoxelTool::_b_set_voxel(Vector3i pos, uint64_t v) {
 	set_voxel(pos, v);
 }
@@ -759,6 +781,7 @@ void VoxelTool::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_voxel", "pos"), &VoxelTool::_b_get_voxel);
 	ClassDB::bind_method(D_METHOD("get_voxel_f", "pos"), &VoxelTool::_b_get_voxel_f);
+	ClassDB::bind_method(D_METHOD("get_voxel_data_channels", "pos"), &VoxelTool::_b_get_voxel_data_channels);
 	ClassDB::bind_method(D_METHOD("set_voxel", "pos", "v"), &VoxelTool::_b_set_voxel);
 	ClassDB::bind_method(D_METHOD("set_voxel_f", "pos", "v"), &VoxelTool::_b_set_voxel_f);
 	ClassDB::bind_method(D_METHOD("do_point", "pos"), &VoxelTool::_b_do_point);

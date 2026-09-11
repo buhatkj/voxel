@@ -80,6 +80,7 @@ public:
 protected:
 	uint64_t _get_voxel(Vector3i pos) const override;
 	float _get_voxel_f(Vector3i pos) const override;
+	float _get_voxel_f(Vector3i pos, VoxelBuffer::ChannelId channel) const override;
 	void _set_voxel(Vector3i pos, uint64_t v) override;
 	void _set_voxel_f(Vector3i pos, float v) override;
 	void _post_edit(const Box3i &box) override;
