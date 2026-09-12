@@ -12,6 +12,10 @@
 
 ZN_GODOT_FORWARD_DECLARE(class Image)
 
+namespace zylann {
+class ZN_FastNoiseLite;
+}
+
 namespace zylann::voxel {
 
 // Generates a spherical planet SDF from a heightmap image.
@@ -31,6 +35,15 @@ public:
 
 	void set_factor(float factor);
 	float get_factor() const;
+
+	void set_detail_noise(Ref<ZN_FastNoiseLite> noise);
+	Ref<ZN_FastNoiseLite> get_detail_noise() const;
+
+	void set_detail_noise_enabled(bool enabled);
+	bool is_detail_noise_enabled() const;
+
+	void set_detail_noise_amplitude(float amplitude);
+	float get_detail_noise_amplitude() const;
 
 	Result generate_block(VoxelGenerator::VoxelQueryData input) override;
 
@@ -62,6 +75,8 @@ private:
 private:
 	// Proper reference used for external access.
 	Ref<Image> _image;
+	// Proper reference used for external access.
+	Ref<ZN_FastNoiseLite> _detail_noise;
 
 	struct Parameters {
 		// This is a read-only copy of the image.
@@ -75,10 +90,26 @@ private:
 		// Image dimensions, used to normalize UV coordinates.
 		float norm_x = 1.f;
 		float norm_y = 1.f;
+		// Detail noise (fractal Perlin) blended into the surface for fine detail.
+		Ref<ZN_FastNoiseLite> detail_noise;
+		bool detail_noise_enabled = false;
+		// Full amplitude of the detail noise, in SDF units, when the attenuation factor is 1.0.
+		float detail_noise_amplitude = 0.5f;
 	};
 
 	Parameters _parameters;
 	RWLock _parameters_lock;
+
+	// Blends the detail noise into the SDF value, attenuated by the G channel (CHANNEL_DATA5)
+	// of the heightmap. Returns the SDF unchanged when the noise is disabled or has no amplitude.
+	float _apply_noise(
+			float sdf,
+			float pos_x,
+			float pos_y,
+			float pos_z,
+			const Parameters &params,
+			const Image &image
+	) const;
 };
 
 } // namespace zylann::voxel
