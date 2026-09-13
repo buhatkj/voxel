@@ -30,6 +30,15 @@ public:
 	void set_image(Ref<Image> im);
 	Ref<Image> get_image() const;
 
+	void set_image_data5(Ref<Image> im);
+	Ref<Image> get_image_data5() const;
+
+	void set_image_data6(Ref<Image> im);
+	Ref<Image> get_image_data6() const;
+
+	void set_image_data7(Ref<Image> im);
+	Ref<Image> get_image_data7() const;
+
 	void set_radius(float radius);
 	float get_radius() const;
 
@@ -75,6 +84,9 @@ private:
 private:
 	// Proper reference used for external access.
 	Ref<Image> _image;
+	Ref<Image> _image_data5;
+	Ref<Image> _image_data6;
+	Ref<Image> _image_data7;
 	// Proper reference used for external access.
 	Ref<ZN_FastNoiseLite> _detail_noise;
 
@@ -90,6 +102,20 @@ private:
 		// Image dimensions, used to normalize UV coordinates.
 		float norm_x = 1.f;
 		float norm_y = 1.f;
+
+		// Separate images for data channels (DATA5: green, DATA6: blue, DATA7: alpha).
+		Ref<Image> image_data5;
+		float norm_x_data5 = 1.f;
+		float norm_y_data5 = 1.f;
+
+		Ref<Image> image_data6;
+		float norm_x_data6 = 1.f;
+		float norm_y_data6 = 1.f;
+
+		Ref<Image> image_data7;
+		float norm_x_data7 = 1.f;
+		float norm_y_data7 = 1.f;
+
 		// Detail noise (fractal Perlin) blended into the surface for fine detail.
 		Ref<ZN_FastNoiseLite> detail_noise;
 		bool detail_noise_enabled = false;
@@ -101,14 +127,13 @@ private:
 	RWLock _parameters_lock;
 
 	// Blends the detail noise into the SDF value, attenuated by the G channel (CHANNEL_DATA5)
-	// of the heightmap. Returns the SDF unchanged when the noise is disabled or has no amplitude.
+	// of image_data5. Returns the SDF unchanged when the noise is disabled or has no amplitude.
 	float _apply_noise(
 			float sdf,
 			float pos_x,
 			float pos_y,
 			float pos_z,
-			const Parameters &params,
-			const Image &image
+			const Parameters &params
 	) const;
 };
 
