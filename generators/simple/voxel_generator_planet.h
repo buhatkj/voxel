@@ -129,6 +129,9 @@ public:
 	void set_rotation_speed(float speed);
 	float get_rotation_speed() const;
 
+	void set_rotation_axis(Vector3 axis);
+	Vector3 get_rotation_axis() const;
+
 	void set_atmospheric_density(float density);
 	float get_atmospheric_density() const;
 
@@ -242,6 +245,7 @@ private:
 		float detail_noise_amplitude = 0.5f;
 
 		float rotation_speed = 0.0f;
+		Vector3 rotation_axis = Vector3(0.0f, 1.0f, 0.0f);
 		float atmospheric_density = 0.0f;
 		int atmosphere_thickness = 0;
 		int water_table_radius = 0;

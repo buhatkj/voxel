@@ -441,6 +441,24 @@ float VoxelGeneratorPlanet::get_rotation_speed() const {
 	return _parameters.rotation_speed;
 }
 
+void VoxelGeneratorPlanet::set_rotation_axis(Vector3 axis) {
+	if (axis.is_zero_approx()) {
+		axis = Vector3(0.0f, 1.0f, 0.0f);
+	} else {
+		axis.normalize();
+	}
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.rotation_axis = axis;
+	}
+	emit_changed();
+}
+
+Vector3 VoxelGeneratorPlanet::get_rotation_axis() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.rotation_axis;
+}
+
 void VoxelGeneratorPlanet::set_atmospheric_density(float density) {
 	{
 		RWLockWrite wlock(_parameters_lock);
@@ -917,6 +935,9 @@ void VoxelGeneratorPlanet::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rotation_speed", "speed"), &VoxelGeneratorPlanet::set_rotation_speed);
 	ClassDB::bind_method(D_METHOD("get_rotation_speed"), &VoxelGeneratorPlanet::get_rotation_speed);
 
+	ClassDB::bind_method(D_METHOD("set_rotation_axis", "axis"), &VoxelGeneratorPlanet::set_rotation_axis);
+	ClassDB::bind_method(D_METHOD("get_rotation_axis"), &VoxelGeneratorPlanet::get_rotation_axis);
+
 	ClassDB::bind_method(
 			D_METHOD("set_atmospheric_density", "density"), &VoxelGeneratorPlanet::set_atmospheric_density
 	);
@@ -1029,6 +1050,11 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			PropertyInfo(Variant::FLOAT, "rotation_speed"),
 			"set_rotation_speed",
 			"get_rotation_speed"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::VECTOR3, "rotation_axis"),
+			"set_rotation_axis",
+			"get_rotation_axis"
 	);
 	ADD_PROPERTY(
 			PropertyInfo(Variant::FLOAT, "atmospheric_density"),
