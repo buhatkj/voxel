@@ -1,10 +1,12 @@
 #include "voxel_generator_planet.h"
+#include "../../constants/voxel_string_names.h"
 #include "../../util/containers/span.h"
 #include "../../util/godot/classes/image.h"
 #include "../../util/math/sdf_sphere_heightmap.h"
 #include "../../util/noise/fast_noise_lite/fast_noise_lite.h"
 
 #ifdef ZN_GODOT
+#include "../../util/godot/core/callable_mp.h"
 #include "../../util/godot/core/class_db.h"
 #endif
 
@@ -17,15 +19,31 @@ VoxelGeneratorPlanet::VoxelGeneratorPlanet() {
 	set_height_noise(noise);
 }
 
-VoxelGeneratorPlanet::~VoxelGeneratorPlanet() {}
+VoxelGeneratorPlanet::~VoxelGeneratorPlanet() {
+	if (_height_noise.is_valid()) {
+		_height_noise->disconnect(
+				VoxelStringNames::get_singleton().changed,
+				callable_mp(this, &VoxelGeneratorPlanet::_on_height_noise_changed)
+		);
+	}
+	if (_detail_noise.is_valid()) {
+		_detail_noise->disconnect(
+				VoxelStringNames::get_singleton().changed,
+				callable_mp(this, &VoxelGeneratorPlanet::_on_detail_noise_changed)
+		);
+	}
+}
 
 void VoxelGeneratorPlanet::set_height_source(HeightSource source) {
 	if (_height_source == source) {
 		return;
 	}
 	_height_source = source;
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.height_source = source;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.height_source = source;
+	}
+	emit_changed();
 }
 
 VoxelGeneratorPlanet::HeightSource VoxelGeneratorPlanet::get_height_source() const {
@@ -71,12 +89,15 @@ void VoxelGeneratorPlanet::set_image(Ref<Image> im) {
 			max_h = 1.f;
 		}
 	}
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.image = copy;
-	_parameters.min_height = min_h;
-	_parameters.max_height = max_h;
-	_parameters.norm_x = norm_x;
-	_parameters.norm_y = norm_y;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.image = copy;
+		_parameters.min_height = min_h;
+		_parameters.max_height = max_h;
+		_parameters.norm_x = norm_x;
+		_parameters.norm_y = norm_y;
+	}
+	emit_changed();
 }
 
 Ref<Image> VoxelGeneratorPlanet::get_image() const {
@@ -87,14 +108,36 @@ void VoxelGeneratorPlanet::set_height_noise(Ref<ZN_FastNoiseLite> noise) {
 	if (_height_noise == noise) {
 		return;
 	}
+	if (_height_noise.is_valid()) {
+		_height_noise->disconnect(
+				VoxelStringNames::get_singleton().changed,
+				callable_mp(this, &VoxelGeneratorPlanet::_on_height_noise_changed)
+		);
+	}
 	_height_noise = noise;
 	Ref<ZN_FastNoiseLite> copy;
 	if (noise.is_valid()) {
+		_height_noise->connect(
+				VoxelStringNames::get_singleton().changed,
+				callable_mp(this, &VoxelGeneratorPlanet::_on_height_noise_changed)
+		);
 		// The noise resource is not thread-safe, so we keep a private copy for use in worker threads.
 		copy = noise->duplicate();
 	}
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.height_noise = copy;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.height_noise = copy;
+	}
+	emit_changed();
+}
+
+void VoxelGeneratorPlanet::_on_height_noise_changed() {
+	ERR_FAIL_COND(_height_noise.is_null());
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.height_noise = _height_noise->duplicate();
+	}
+	emit_changed();
 }
 
 Ref<ZN_FastNoiseLite> VoxelGeneratorPlanet::get_height_noise() const {
@@ -105,8 +148,11 @@ void VoxelGeneratorPlanet::set_height_noise_amplitude(float amplitude) {
 	if (amplitude < 0.f) {
 		amplitude = 0.f;
 	}
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.height_noise_amplitude = amplitude;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.height_noise_amplitude = amplitude;
+	}
+	emit_changed();
 }
 
 float VoxelGeneratorPlanet::get_height_noise_amplitude() const {
@@ -130,10 +176,13 @@ void VoxelGeneratorPlanet::set_image_data5(Ref<Image> im) {
 		norm_x = float(im->get_width());
 		norm_y = float(im->get_height());
 	}
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.image_data5 = copy;
-	_parameters.norm_x_data5 = norm_x;
-	_parameters.norm_y_data5 = norm_y;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.image_data5 = copy;
+		_parameters.norm_x_data5 = norm_x;
+		_parameters.norm_y_data5 = norm_y;
+	}
+	emit_changed();
 }
 
 Ref<Image> VoxelGeneratorPlanet::get_image_data5() const {
@@ -156,10 +205,13 @@ void VoxelGeneratorPlanet::set_image_data6(Ref<Image> im) {
 		norm_x = float(im->get_width());
 		norm_y = float(im->get_height());
 	}
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.image_data6 = copy;
-	_parameters.norm_x_data6 = norm_x;
-	_parameters.norm_y_data6 = norm_y;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.image_data6 = copy;
+		_parameters.norm_x_data6 = norm_x;
+		_parameters.norm_y_data6 = norm_y;
+	}
+	emit_changed();
 }
 
 Ref<Image> VoxelGeneratorPlanet::get_image_data6() const {
@@ -182,10 +234,13 @@ void VoxelGeneratorPlanet::set_image_data7(Ref<Image> im) {
 		norm_x = float(im->get_width());
 		norm_y = float(im->get_height());
 	}
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.image_data7 = copy;
-	_parameters.norm_x_data7 = norm_x;
-	_parameters.norm_y_data7 = norm_y;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.image_data7 = copy;
+		_parameters.norm_x_data7 = norm_x;
+		_parameters.norm_y_data7 = norm_y;
+	}
+	emit_changed();
 }
 
 Ref<Image> VoxelGeneratorPlanet::get_image_data7() const {
@@ -193,8 +248,11 @@ Ref<Image> VoxelGeneratorPlanet::get_image_data7() const {
 }
 
 void VoxelGeneratorPlanet::set_radius(float radius) {
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.radius = radius;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.radius = radius;
+	}
+	emit_changed();
 }
 
 float VoxelGeneratorPlanet::get_radius() const {
@@ -203,8 +261,11 @@ float VoxelGeneratorPlanet::get_radius() const {
 }
 
 void VoxelGeneratorPlanet::set_factor(float factor) {
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.factor = factor;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.factor = factor;
+	}
+	emit_changed();
 }
 
 float VoxelGeneratorPlanet::get_factor() const {
@@ -216,14 +277,36 @@ void VoxelGeneratorPlanet::set_detail_noise(Ref<ZN_FastNoiseLite> noise) {
 	if (_detail_noise == noise) {
 		return;
 	}
+	if (_detail_noise.is_valid()) {
+		_detail_noise->disconnect(
+				VoxelStringNames::get_singleton().changed,
+				callable_mp(this, &VoxelGeneratorPlanet::_on_detail_noise_changed)
+		);
+	}
 	_detail_noise = noise;
 	Ref<ZN_FastNoiseLite> copy;
 	if (noise.is_valid()) {
+		_detail_noise->connect(
+				VoxelStringNames::get_singleton().changed,
+				callable_mp(this, &VoxelGeneratorPlanet::_on_detail_noise_changed)
+		);
 		// The noise resource is not thread-safe, so we keep a private copy for use in worker threads.
 		copy = noise->duplicate();
 	}
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.detail_noise = copy;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.detail_noise = copy;
+	}
+	emit_changed();
+}
+
+void VoxelGeneratorPlanet::_on_detail_noise_changed() {
+	ERR_FAIL_COND(_detail_noise.is_null());
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.detail_noise = _detail_noise->duplicate();
+	}
+	emit_changed();
 }
 
 Ref<ZN_FastNoiseLite> VoxelGeneratorPlanet::get_detail_noise() const {
@@ -231,8 +314,11 @@ Ref<ZN_FastNoiseLite> VoxelGeneratorPlanet::get_detail_noise() const {
 }
 
 void VoxelGeneratorPlanet::set_detail_noise_enabled(bool enabled) {
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.detail_noise_enabled = enabled;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.detail_noise_enabled = enabled;
+	}
+	emit_changed();
 }
 
 bool VoxelGeneratorPlanet::is_detail_noise_enabled() const {
@@ -244,8 +330,11 @@ void VoxelGeneratorPlanet::set_detail_noise_amplitude(float amplitude) {
 	if (amplitude < 0.f) {
 		amplitude = 0.f;
 	}
-	RWLockWrite wlock(_parameters_lock);
-	_parameters.detail_noise_amplitude = amplitude;
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.detail_noise_amplitude = amplitude;
+	}
+	emit_changed();
 }
 
 float VoxelGeneratorPlanet::get_detail_noise_amplitude() const {

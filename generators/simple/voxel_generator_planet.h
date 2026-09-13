@@ -95,6 +95,9 @@ public:
 private:
 	static void _bind_methods();
 
+	void _on_height_noise_changed();
+	void _on_detail_noise_changed();
+
 private:
 	// Proper reference used for external access.
 	HeightSource _height_source = SOURCE_NOISE;
