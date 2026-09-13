@@ -2,6 +2,7 @@
 #include "../../constants/voxel_string_names.h"
 #include "../../util/containers/span.h"
 #include "../../util/godot/classes/image.h"
+#include "../../util/godot/core/typed_array.h"
 #include "../../util/math/sdf_sphere_heightmap.h"
 #include "../../util/noise/fast_noise_lite/fast_noise_lite.h"
 
@@ -11,6 +12,90 @@
 #endif
 
 namespace zylann::voxel {
+
+VoxelPlanetAtmosphericGas::VoxelPlanetAtmosphericGas() {}
+
+void VoxelPlanetAtmosphericGas::set_gas_name(const String &p_name) {
+	if (_name == p_name) {
+		return;
+	}
+	_name = p_name;
+	emit_changed();
+}
+
+String VoxelPlanetAtmosphericGas::get_gas_name() const {
+	return _name;
+}
+
+void VoxelPlanetAtmosphericGas::set_percentage(float p_percentage) {
+	if (_percentage == p_percentage) {
+		return;
+	}
+	_percentage = p_percentage;
+	emit_changed();
+}
+
+float VoxelPlanetAtmosphericGas::get_percentage() const {
+	return _percentage;
+}
+
+void VoxelPlanetAtmosphericGas::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_gas_name", "name"), &VoxelPlanetAtmosphericGas::set_gas_name);
+	ClassDB::bind_method(D_METHOD("get_gas_name"), &VoxelPlanetAtmosphericGas::get_gas_name);
+	ClassDB::bind_method(D_METHOD("set_name", "name"), &VoxelPlanetAtmosphericGas::set_name);
+	ClassDB::bind_method(D_METHOD("get_name"), &VoxelPlanetAtmosphericGas::get_name);
+	ClassDB::bind_method(D_METHOD("set_percentage", "percentage"), &VoxelPlanetAtmosphericGas::set_percentage);
+	ClassDB::bind_method(D_METHOD("get_percentage"), &VoxelPlanetAtmosphericGas::get_percentage);
+
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "gas_name"), "set_gas_name", "get_gas_name");
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "percentage", PROPERTY_HINT_RANGE, "0,100,0.01,or_greater"),
+			"set_percentage",
+			"get_percentage"
+	);
+}
+
+VoxelPlanetMineral::VoxelPlanetMineral() {}
+
+void VoxelPlanetMineral::set_mineral_name(const String &p_name) {
+	if (_name == p_name) {
+		return;
+	}
+	_name = p_name;
+	emit_changed();
+}
+
+String VoxelPlanetMineral::get_mineral_name() const {
+	return _name;
+}
+
+void VoxelPlanetMineral::set_percentage(float p_percentage) {
+	if (_percentage == p_percentage) {
+		return;
+	}
+	_percentage = p_percentage;
+	emit_changed();
+}
+
+float VoxelPlanetMineral::get_percentage() const {
+	return _percentage;
+}
+
+void VoxelPlanetMineral::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_mineral_name", "name"), &VoxelPlanetMineral::set_mineral_name);
+	ClassDB::bind_method(D_METHOD("get_mineral_name"), &VoxelPlanetMineral::get_mineral_name);
+	ClassDB::bind_method(D_METHOD("set_name", "name"), &VoxelPlanetMineral::set_name);
+	ClassDB::bind_method(D_METHOD("get_name"), &VoxelPlanetMineral::get_name);
+	ClassDB::bind_method(D_METHOD("set_percentage", "percentage"), &VoxelPlanetMineral::set_percentage);
+	ClassDB::bind_method(D_METHOD("get_percentage"), &VoxelPlanetMineral::get_percentage);
+
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "mineral_name"), "set_mineral_name", "get_mineral_name");
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "percentage", PROPERTY_HINT_RANGE, "0,100,0.01,or_greater"),
+			"set_percentage",
+			"get_percentage"
+	);
+}
 
 VoxelGeneratorPlanet::VoxelGeneratorPlanet() {
 	_height_source = SOURCE_NOISE;
@@ -32,6 +117,7 @@ VoxelGeneratorPlanet::~VoxelGeneratorPlanet() {
 				callable_mp(this, &VoxelGeneratorPlanet::_on_detail_noise_changed)
 		);
 	}
+	
 }
 
 void VoxelGeneratorPlanet::set_height_source(HeightSource source) {
@@ -340,6 +426,126 @@ void VoxelGeneratorPlanet::set_detail_noise_amplitude(float amplitude) {
 float VoxelGeneratorPlanet::get_detail_noise_amplitude() const {
 	RWLockRead rlock(_parameters_lock);
 	return _parameters.detail_noise_amplitude;
+}
+
+void VoxelGeneratorPlanet::set_rotation_speed(float speed) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.rotation_speed = speed;
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_rotation_speed() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.rotation_speed;
+}
+
+void VoxelGeneratorPlanet::set_atmospheric_density(float density) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.atmospheric_density = density;
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_atmospheric_density() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.atmospheric_density;
+}
+
+void VoxelGeneratorPlanet::set_atmosphere_thickness(int thickness) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.atmosphere_thickness = thickness;
+	}
+	emit_changed();
+}
+
+int VoxelGeneratorPlanet::get_atmosphere_thickness() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.atmosphere_thickness;
+}
+
+void VoxelGeneratorPlanet::set_atmospheric_composition(TypedArray<VoxelPlanetAtmosphericGas> composition) {
+	zylann::godot::copy_to(_atmospheric_composition, composition);
+	StdVector<Parameters::GasItem> items;
+	items.resize(_atmospheric_composition.size());
+	for (size_t i = 0; i < _atmospheric_composition.size(); ++i) {
+		if (_atmospheric_composition[i].is_valid()) {
+			items[i].name = _atmospheric_composition[i]->get_gas_name();
+			items[i].percentage = _atmospheric_composition[i]->get_percentage();
+		}
+	}
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.atmospheric_composition = items;
+	}
+	emit_changed();
+}
+
+TypedArray<VoxelPlanetAtmosphericGas> VoxelGeneratorPlanet::get_atmospheric_composition() const {
+	return zylann::godot::to_typed_array(to_span(_atmospheric_composition));
+}
+
+void VoxelGeneratorPlanet::set_water_table_radius(int radius) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.water_table_radius = radius;
+	}
+	emit_changed();
+}
+
+int VoxelGeneratorPlanet::get_water_table_radius() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.water_table_radius;
+}
+
+void VoxelGeneratorPlanet::set_mineral_composition(TypedArray<VoxelPlanetMineral> composition) {
+	zylann::godot::copy_to(_mineral_composition, composition);
+	StdVector<Parameters::MineralItem> items;
+	items.resize(_mineral_composition.size());
+	for (size_t i = 0; i < _mineral_composition.size(); ++i) {
+		if (_mineral_composition[i].is_valid()) {
+			items[i].name = _mineral_composition[i]->get_mineral_name();
+			items[i].percentage = _mineral_composition[i]->get_percentage();
+		}
+	}
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.mineral_composition = items;
+	}
+	emit_changed();
+}
+
+TypedArray<VoxelPlanetMineral> VoxelGeneratorPlanet::get_mineral_composition() const {
+	return zylann::godot::to_typed_array(to_span(_mineral_composition));
+}
+
+void VoxelGeneratorPlanet::set_min_surface_temperature(float temp) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.min_surface_temperature = temp;
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_min_surface_temperature() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.min_surface_temperature;
+}
+
+void VoxelGeneratorPlanet::set_max_surface_temperature(float temp) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.max_surface_temperature = temp;
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_max_surface_temperature() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.max_surface_temperature;
 }
 
 float VoxelGeneratorPlanet::_apply_noise(
@@ -708,6 +914,56 @@ void VoxelGeneratorPlanet::_bind_methods() {
 	);
 	ClassDB::bind_method(D_METHOD("get_detail_noise_amplitude"), &VoxelGeneratorPlanet::get_detail_noise_amplitude);
 
+	ClassDB::bind_method(D_METHOD("set_rotation_speed", "speed"), &VoxelGeneratorPlanet::set_rotation_speed);
+	ClassDB::bind_method(D_METHOD("get_rotation_speed"), &VoxelGeneratorPlanet::get_rotation_speed);
+
+	ClassDB::bind_method(
+			D_METHOD("set_atmospheric_density", "density"), &VoxelGeneratorPlanet::set_atmospheric_density
+	);
+	ClassDB::bind_method(D_METHOD("get_atmospheric_density"), &VoxelGeneratorPlanet::get_atmospheric_density);
+
+	ClassDB::bind_method(
+			D_METHOD("set_atmosphere_thickness", "thickness"), &VoxelGeneratorPlanet::set_atmosphere_thickness
+	);
+	ClassDB::bind_method(D_METHOD("get_atmosphere_thickness"), &VoxelGeneratorPlanet::get_atmosphere_thickness);
+
+	ClassDB::bind_method(
+			D_METHOD("set_atmospheric_composition", "composition"), &VoxelGeneratorPlanet::set_atmospheric_composition
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_atmospheric_composition"), &VoxelGeneratorPlanet::get_atmospheric_composition
+	);
+
+	ClassDB::bind_method(D_METHOD("set_water_table_radius", "radius"), &VoxelGeneratorPlanet::set_water_table_radius);
+	ClassDB::bind_method(D_METHOD("get_water_table_radius"), &VoxelGeneratorPlanet::get_water_table_radius);
+
+	ClassDB::bind_method(
+			D_METHOD("set_mineral_composition", "composition"), &VoxelGeneratorPlanet::set_mineral_composition
+	);
+	ClassDB::bind_method(D_METHOD("get_mineral_composition"), &VoxelGeneratorPlanet::get_mineral_composition);
+
+	ClassDB::bind_method(
+			D_METHOD("set_min_surface_temperature", "temp"), &VoxelGeneratorPlanet::set_min_surface_temperature
+	);
+	ClassDB::bind_method(D_METHOD("get_min_surface_temperature"), &VoxelGeneratorPlanet::get_min_surface_temperature);
+	ClassDB::bind_method(
+			D_METHOD("set_minimum_surface_temperature", "temp"), &VoxelGeneratorPlanet::set_minimum_surface_temperature
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_minimum_surface_temperature"), &VoxelGeneratorPlanet::get_minimum_surface_temperature
+	);
+
+	ClassDB::bind_method(
+			D_METHOD("set_max_surface_temperature", "temp"), &VoxelGeneratorPlanet::set_max_surface_temperature
+	);
+	ClassDB::bind_method(D_METHOD("get_max_surface_temperature"), &VoxelGeneratorPlanet::get_max_surface_temperature);
+	ClassDB::bind_method(
+			D_METHOD("set_maximum_surface_temperature", "temp"), &VoxelGeneratorPlanet::set_maximum_surface_temperature
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_maximum_surface_temperature"), &VoxelGeneratorPlanet::get_maximum_surface_temperature
+	);
+
 	ADD_PROPERTY(
 			PropertyInfo(Variant::INT, "height_source", PROPERTY_HINT_ENUM, "Image,Noise"),
 			"set_height_source",
@@ -767,6 +1023,57 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			PropertyInfo(Variant::FLOAT, "detail_noise_amplitude"),
 			"set_detail_noise_amplitude",
 			"get_detail_noise_amplitude"
+	);
+
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "rotation_speed"),
+			"set_rotation_speed",
+			"get_rotation_speed"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "atmospheric_density"),
+			"set_atmospheric_density",
+			"get_atmospheric_density"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::INT, "atmosphere_thickness"),
+			"set_atmosphere_thickness",
+			"get_atmosphere_thickness"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(
+					Variant::ARRAY,
+					"atmospheric_composition",
+					PROPERTY_HINT_ARRAY_TYPE,
+					MAKE_RESOURCE_TYPE_HINT(VoxelPlanetAtmosphericGas::get_class_static())
+			),
+			"set_atmospheric_composition",
+			"get_atmospheric_composition"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::INT, "water_table_radius"),
+			"set_water_table_radius",
+			"get_water_table_radius"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(
+					Variant::ARRAY,
+					"mineral_composition",
+					PROPERTY_HINT_ARRAY_TYPE,
+					MAKE_RESOURCE_TYPE_HINT(VoxelPlanetMineral::get_class_static())
+			),
+			"set_mineral_composition",
+			"get_mineral_composition"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "min_surface_temperature"),
+			"set_min_surface_temperature",
+			"get_min_surface_temperature"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "max_surface_temperature"),
+			"set_max_surface_temperature",
+			"get_max_surface_temperature"
 	);
 
 	BIND_ENUM_CONSTANT(SOURCE_IMAGE);

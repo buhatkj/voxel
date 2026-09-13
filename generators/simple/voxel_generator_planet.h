@@ -4,6 +4,10 @@
 #include "../../constants/voxel_constants.h"
 #include "../../storage/voxel_buffer.h"
 #include "../../util/containers/span.h"
+#include "../../util/containers/std_vector.h"
+#include "../../util/godot/classes/object.h"
+#include "../../util/godot/classes/resource.h"
+#include "../../util/godot/core/typed_array.h"
 #include "../../util/godot/macros.h"
 #include "../../util/math/vector3f.h"
 #include "../../util/math/vector3i.h"
@@ -17,6 +21,60 @@ class ZN_FastNoiseLite;
 }
 
 namespace zylann::voxel {
+
+class VoxelPlanetAtmosphericGas : public Resource {
+	GDCLASS(VoxelPlanetAtmosphericGas, Resource)
+
+public:
+	VoxelPlanetAtmosphericGas();
+
+	void set_gas_name(const String &p_name);
+	String get_gas_name() const;
+
+	void set_name(const String &p_name) {
+		set_gas_name(p_name);
+	}
+	String get_name() const {
+		return get_gas_name();
+	}
+
+	void set_percentage(float p_percentage);
+	float get_percentage() const;
+
+private:
+	static void _bind_methods();
+
+private:
+	String _name;
+	float _percentage = 0.0f;
+};
+
+class VoxelPlanetMineral : public Resource {
+	GDCLASS(VoxelPlanetMineral, Resource)
+
+public:
+	VoxelPlanetMineral();
+
+	void set_mineral_name(const String &p_name);
+	String get_mineral_name() const;
+
+	void set_name(const String &p_name) {
+		set_mineral_name(p_name);
+	}
+	String get_name() const {
+		return get_mineral_name();
+	}
+
+	void set_percentage(float p_percentage);
+	float get_percentage() const;
+
+private:
+	static void _bind_methods();
+
+private:
+	String _name;
+	float _percentage = 0.0f;
+};
 
 // Generates a spherical planet SDF from a heightmap image or noise.
 // This is a CPU-only, graph-free equivalent of the `SdfSphereHeightmap` graph node.
@@ -67,6 +125,42 @@ public:
 
 	void set_detail_noise_amplitude(float amplitude);
 	float get_detail_noise_amplitude() const;
+
+	void set_rotation_speed(float speed);
+	float get_rotation_speed() const;
+
+	void set_atmospheric_density(float density);
+	float get_atmospheric_density() const;
+
+	void set_atmosphere_thickness(int thickness);
+	int get_atmosphere_thickness() const;
+
+	void set_atmospheric_composition(TypedArray<VoxelPlanetAtmosphericGas> composition);
+	TypedArray<VoxelPlanetAtmosphericGas> get_atmospheric_composition() const;
+
+	void set_water_table_radius(int radius);
+	int get_water_table_radius() const;
+
+	void set_mineral_composition(TypedArray<VoxelPlanetMineral> composition);
+	TypedArray<VoxelPlanetMineral> get_mineral_composition() const;
+
+	void set_min_surface_temperature(float temp);
+	float get_min_surface_temperature() const;
+	void set_minimum_surface_temperature(float temp) {
+		set_min_surface_temperature(temp);
+	}
+	float get_minimum_surface_temperature() const {
+		return get_min_surface_temperature();
+	}
+
+	void set_max_surface_temperature(float temp);
+	float get_max_surface_temperature() const;
+	void set_maximum_surface_temperature(float temp) {
+		set_max_surface_temperature(temp);
+	}
+	float get_maximum_surface_temperature() const {
+		return get_max_surface_temperature();
+	}
 
 	Result generate_block(VoxelGenerator::VoxelQueryData input) override;
 
@@ -146,10 +240,32 @@ private:
 		bool detail_noise_enabled = false;
 		// Full amplitude of the detail noise, in SDF units, when the attenuation factor is 1.0.
 		float detail_noise_amplitude = 0.5f;
+
+		float rotation_speed = 0.0f;
+		float atmospheric_density = 0.0f;
+		int atmosphere_thickness = 0;
+		int water_table_radius = 0;
+		float min_surface_temperature = 273.15f;
+		float max_surface_temperature = 273.15f;
+
+		struct GasItem {
+			String name;
+			float percentage = 0.0f;
+		};
+		StdVector<GasItem> atmospheric_composition;
+
+		struct MineralItem {
+			String name;
+			float percentage = 0.0f;
+		};
+		StdVector<MineralItem> mineral_composition;
 	};
 
 	Parameters _parameters;
 	RWLock _parameters_lock;
+
+	StdVector<Ref<VoxelPlanetAtmosphericGas>> _atmospheric_composition;
+	StdVector<Ref<VoxelPlanetMineral>> _mineral_composition;
 
 	// Blends the detail noise into the SDF value, attenuated by the G channel (CHANNEL_DATA5)
 	// of image_data5. Returns the SDF unchanged when the noise is disabled or has no amplitude.

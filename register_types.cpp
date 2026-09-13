@@ -367,6 +367,8 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<VoxelGeneratorNoise2D>();
 		ClassDB::register_class<VoxelGeneratorNoise>();
 		ClassDB::register_class<VoxelGeneratorPlanet>();
+		ClassDB::register_class<VoxelPlanetAtmosphericGas>();
+		ClassDB::register_class<VoxelPlanetMineral>();
 #endif
 
 #ifdef VOXEL_ENABLE_MESH_SDF
