@@ -10,9 +10,28 @@
 
 namespace zylann::voxel {
 
-VoxelGeneratorPlanet::VoxelGeneratorPlanet() {}
+VoxelGeneratorPlanet::VoxelGeneratorPlanet() {
+	_height_source = SOURCE_NOISE;
+	Ref<ZN_FastNoiseLite> noise;
+	noise.instantiate();
+	set_height_noise(noise);
+}
 
 VoxelGeneratorPlanet::~VoxelGeneratorPlanet() {}
+
+void VoxelGeneratorPlanet::set_height_source(HeightSource source) {
+	if (_height_source == source) {
+		return;
+	}
+	_height_source = source;
+	RWLockWrite wlock(_parameters_lock);
+	_parameters.height_source = source;
+}
+
+VoxelGeneratorPlanet::HeightSource VoxelGeneratorPlanet::get_height_source() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.height_source;
+}
 
 void VoxelGeneratorPlanet::set_image(Ref<Image> im) {
 	if (im == _image) {
@@ -62,6 +81,37 @@ void VoxelGeneratorPlanet::set_image(Ref<Image> im) {
 
 Ref<Image> VoxelGeneratorPlanet::get_image() const {
 	return _image;
+}
+
+void VoxelGeneratorPlanet::set_height_noise(Ref<ZN_FastNoiseLite> noise) {
+	if (_height_noise == noise) {
+		return;
+	}
+	_height_noise = noise;
+	Ref<ZN_FastNoiseLite> copy;
+	if (noise.is_valid()) {
+		// The noise resource is not thread-safe, so we keep a private copy for use in worker threads.
+		copy = noise->duplicate();
+	}
+	RWLockWrite wlock(_parameters_lock);
+	_parameters.height_noise = copy;
+}
+
+Ref<ZN_FastNoiseLite> VoxelGeneratorPlanet::get_height_noise() const {
+	return _height_noise;
+}
+
+void VoxelGeneratorPlanet::set_height_noise_amplitude(float amplitude) {
+	if (amplitude < 0.f) {
+		amplitude = 0.f;
+	}
+	RWLockWrite wlock(_parameters_lock);
+	_parameters.height_noise_amplitude = amplitude;
+}
+
+float VoxelGeneratorPlanet::get_height_noise_amplitude() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.height_noise_amplitude;
 }
 
 void VoxelGeneratorPlanet::set_image_data5(Ref<Image> im) {
@@ -255,8 +305,11 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 
 	Result result;
 
-	ERR_FAIL_COND_V(params.image.is_null(), result);
-	const Image &image = **params.image;
+	if (params.height_source == SOURCE_IMAGE && params.image.is_null()) {
+		return result;
+	}
+
+	const Image *image = (params.height_source == SOURCE_IMAGE && params.image.is_valid()) ? &**params.image : nullptr;
 
 	const Vector3i bs = out_buffer.get_size();
 	const int stride = 1 << input.lod;
@@ -265,6 +318,9 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 	const Image *im_d6 = params.image_data6.is_valid() ? &**params.image_data6 : nullptr;
 	const Image *im_d7 = params.image_data7.is_valid() ? &**params.image_data7 : nullptr;
 	const bool has_any_data_image = (im_d5 != nullptr || im_d6 != nullptr || im_d7 != nullptr);
+	const ZN_FastNoiseLite *height_noise =
+			(params.height_source == SOURCE_NOISE && params.height_noise.is_valid()) ? &**params.height_noise : nullptr;
+	const float height_noise_amp = params.height_noise_amplitude * params.factor;
 
 	int gz = input.origin_in_voxels.z;
 	for (int z = 0; z < bs.z; ++z, gz += stride) {
@@ -272,18 +328,27 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 		for (int x = 0; x < bs.x; ++x, gx += stride) {
 			int gy = input.origin_in_voxels.y;
 			for (int y = 0; y < bs.y; ++y, gy += stride) {
-				float sdf = sdf_sphere_heightmap(
-						gx,
-						gy,
-						gz,
-						params.radius,
-						params.factor,
-						image,
-						params.min_height,
-						params.max_height,
-						params.norm_x,
-						params.norm_y
-				);
+				float sdf;
+				if (params.height_source == SOURCE_IMAGE) {
+					sdf = sdf_sphere_heightmap(
+							gx,
+							gy,
+							gz,
+							params.radius,
+							params.factor,
+							*image,
+							params.min_height,
+							params.max_height,
+							params.norm_x,
+							params.norm_y
+					);
+				} else {
+					const float d = Math::Fast_Sqrt(float(gx * gx + gy * gy + gz * gz)) + 0.0001f;
+					sdf = d - params.radius;
+					if (height_noise != nullptr && height_noise_amp != 0.f) {
+						sdf -= height_noise_amp * height_noise->get_noise_3d(gx, gy, gz);
+					}
+				}
 				sdf = _apply_noise(sdf, gx, gy, gz, params);
 				out_buffer.set_voxel_f(sdf, x, y, z, VoxelBuffer::CHANNEL_SDF);
 
@@ -330,22 +395,37 @@ VoxelSingleValue VoxelGeneratorPlanet::generate_single(Vector3i pos, unsigned in
 	}
 
 	if (channel == VoxelBuffer::CHANNEL_SDF) {
-		if (params.image.is_null()) {
-			return v;
+		float sdf;
+		if (params.height_source == SOURCE_IMAGE) {
+			if (params.image.is_null()) {
+				return v;
+			}
+			const Image &image = **params.image;
+			sdf = sdf_sphere_heightmap(
+					float(pos.x),
+					float(pos.y),
+					float(pos.z),
+					params.radius,
+					params.factor,
+					image,
+					params.min_height,
+					params.max_height,
+					params.norm_x,
+					params.norm_y
+			);
+		} else {
+			const float fx = float(pos.x);
+			const float fy = float(pos.y);
+			const float fz = float(pos.z);
+			const float d = Math::Fast_Sqrt(fx * fx + fy * fy + fz * fz) + 0.0001f;
+			sdf = d - params.radius;
+			if (params.height_noise.is_valid()) {
+				const float height_noise_amp = params.height_noise_amplitude * params.factor;
+				if (height_noise_amp != 0.f) {
+					sdf -= height_noise_amp * params.height_noise->get_noise_3d(fx, fy, fz);
+				}
+			}
 		}
-		const Image &image = **params.image;
-		float sdf = sdf_sphere_heightmap(
-				float(pos.x),
-				float(pos.y),
-				float(pos.z),
-				params.radius,
-				params.factor,
-				image,
-				params.min_height,
-				params.max_height,
-				params.norm_x,
-				params.norm_y
-		);
 		v.f = _apply_noise(sdf, float(pos.x), float(pos.y), float(pos.z), params);
 	} else if (channel == VoxelBuffer::CHANNEL_DATA5) {
 		if (params.image_data5.is_valid()) {
@@ -413,27 +493,44 @@ void VoxelGeneratorPlanet::generate_series(
 	const size_t count = out_values.size();
 
 	if (channel == VoxelBuffer::CHANNEL_SDF) {
-		if (params.image.is_null()) {
-			for (size_t i = 0; i < count; ++i) {
-				out_values[i] = constants::SDF_FAR_OUTSIDE;
+		if (params.height_source == SOURCE_IMAGE) {
+			if (params.image.is_null()) {
+				for (size_t i = 0; i < count; ++i) {
+					out_values[i] = constants::SDF_FAR_OUTSIDE;
+				}
+				return;
 			}
-			return;
-		}
-		const Image &image = **params.image;
-		for (size_t i = 0; i < count; ++i) {
-			float sdf = sdf_sphere_heightmap(
-					positions_x[i],
-					positions_y[i],
-					positions_z[i],
-					params.radius,
-					params.factor,
-					image,
-					params.min_height,
-					params.max_height,
-					params.norm_x,
-					params.norm_y
-			);
-			out_values[i] = _apply_noise(sdf, positions_x[i], positions_y[i], positions_z[i], params);
+			const Image &image = **params.image;
+			for (size_t i = 0; i < count; ++i) {
+				float sdf = sdf_sphere_heightmap(
+						positions_x[i],
+						positions_y[i],
+						positions_z[i],
+						params.radius,
+						params.factor,
+						image,
+						params.min_height,
+						params.max_height,
+						params.norm_x,
+						params.norm_y
+				);
+				out_values[i] = _apply_noise(sdf, positions_x[i], positions_y[i], positions_z[i], params);
+			}
+		} else {
+			const ZN_FastNoiseLite *height_noise =
+					params.height_noise.is_valid() ? &**params.height_noise : nullptr;
+			const float height_noise_amp = params.height_noise_amplitude * params.factor;
+			for (size_t i = 0; i < count; ++i) {
+				const float px = positions_x[i];
+				const float py = positions_y[i];
+				const float pz = positions_z[i];
+				const float d = Math::Fast_Sqrt(px * px + py * py + pz * pz) + 0.0001f;
+				float sdf = d - params.radius;
+				if (height_noise != nullptr && height_noise_amp != 0.f) {
+					sdf -= height_noise_amp * height_noise->get_noise_3d(px, py, pz);
+				}
+				out_values[i] = _apply_noise(sdf, px, py, pz, params);
+			}
 		}
 	} else if (channel == VoxelBuffer::CHANNEL_DATA5) {
 		if (params.image_data5.is_valid()) {
@@ -485,8 +582,18 @@ void VoxelGeneratorPlanet::generate_series(
 }
 
 void VoxelGeneratorPlanet::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_height_source", "source"), &VoxelGeneratorPlanet::set_height_source);
+	ClassDB::bind_method(D_METHOD("get_height_source"), &VoxelGeneratorPlanet::get_height_source);
+
 	ClassDB::bind_method(D_METHOD("set_image", "image"), &VoxelGeneratorPlanet::set_image);
 	ClassDB::bind_method(D_METHOD("get_image"), &VoxelGeneratorPlanet::get_image);
+
+	ClassDB::bind_method(D_METHOD("set_height_noise", "noise"), &VoxelGeneratorPlanet::set_height_noise);
+	ClassDB::bind_method(D_METHOD("get_height_noise"), &VoxelGeneratorPlanet::get_height_noise);
+	ClassDB::bind_method(
+			D_METHOD("set_height_noise_amplitude", "amplitude"), &VoxelGeneratorPlanet::set_height_noise_amplitude
+	);
+	ClassDB::bind_method(D_METHOD("get_height_noise_amplitude"), &VoxelGeneratorPlanet::get_height_noise_amplitude);
 
 	ClassDB::bind_method(D_METHOD("set_image_data5", "image"), &VoxelGeneratorPlanet::set_image_data5);
 	ClassDB::bind_method(D_METHOD("get_image_data5"), &VoxelGeneratorPlanet::get_image_data5);
@@ -513,9 +620,30 @@ void VoxelGeneratorPlanet::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_detail_noise_amplitude"), &VoxelGeneratorPlanet::get_detail_noise_amplitude);
 
 	ADD_PROPERTY(
+			PropertyInfo(Variant::INT, "height_source", PROPERTY_HINT_ENUM, "Image,Noise"),
+			"set_height_source",
+			"get_height_source"
+	);
+	ADD_PROPERTY(
 			PropertyInfo(Variant::OBJECT, "image", PROPERTY_HINT_RESOURCE_TYPE, Image::get_class_static()),
 			"set_image",
 			"get_image"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(
+					Variant::OBJECT,
+					"height_noise",
+					PROPERTY_HINT_RESOURCE_TYPE,
+					ZN_FastNoiseLite::get_class_static(),
+					PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_EDITOR_INSTANTIATE_OBJECT
+			),
+			"set_height_noise",
+			"get_height_noise"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "height_noise_amplitude"),
+			"set_height_noise_amplitude",
+			"get_height_noise_amplitude"
 	);
 	ADD_PROPERTY(
 			PropertyInfo(Variant::OBJECT, "image_data5", PROPERTY_HINT_RESOURCE_TYPE, Image::get_class_static()),
@@ -551,6 +679,9 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			"set_detail_noise_amplitude",
 			"get_detail_noise_amplitude"
 	);
+
+	BIND_ENUM_CONSTANT(SOURCE_IMAGE);
+	BIND_ENUM_CONSTANT(SOURCE_NOISE);
 }
 
 } // namespace zylann::voxel

@@ -18,17 +18,31 @@ class ZN_FastNoiseLite;
 
 namespace zylann::voxel {
 
-// Generates a spherical planet SDF from a heightmap image.
+// Generates a spherical planet SDF from a heightmap image or noise.
 // This is a CPU-only, graph-free equivalent of the `SdfSphereHeightmap` graph node.
 class VoxelGeneratorPlanet : public VoxelGenerator {
 	GDCLASS(VoxelGeneratorPlanet, VoxelGenerator)
 
 public:
+	enum HeightSource {
+		SOURCE_IMAGE = 0,
+		SOURCE_NOISE = 1
+	};
+
 	VoxelGeneratorPlanet();
 	~VoxelGeneratorPlanet();
 
+	void set_height_source(HeightSource source);
+	HeightSource get_height_source() const;
+
 	void set_image(Ref<Image> im);
 	Ref<Image> get_image() const;
+
+	void set_height_noise(Ref<ZN_FastNoiseLite> noise);
+	Ref<ZN_FastNoiseLite> get_height_noise() const;
+
+	void set_height_noise_amplitude(float amplitude);
+	float get_height_noise_amplitude() const;
 
 	void set_image_data5(Ref<Image> im);
 	Ref<Image> get_image_data5() const;
@@ -83,7 +97,9 @@ private:
 
 private:
 	// Proper reference used for external access.
+	HeightSource _height_source = SOURCE_NOISE;
 	Ref<Image> _image;
+	Ref<ZN_FastNoiseLite> _height_noise;
 	Ref<Image> _image_data5;
 	Ref<Image> _image_data6;
 	Ref<Image> _image_data7;
@@ -91,6 +107,8 @@ private:
 	Ref<ZN_FastNoiseLite> _detail_noise;
 
 	struct Parameters {
+		HeightSource height_source = SOURCE_NOISE;
+
 		// This is a read-only copy of the image.
 		// It wastes memory for sure, but Godot does not offer any way to secure this better.
 		Ref<Image> image;
@@ -102,6 +120,10 @@ private:
 		// Image dimensions, used to normalize UV coordinates.
 		float norm_x = 1.f;
 		float norm_y = 1.f;
+
+		// Height noise (primary surface shape when height_source == SOURCE_NOISE).
+		Ref<ZN_FastNoiseLite> height_noise;
+		float height_noise_amplitude = 1.f;
 
 		// Separate images for data channels (DATA5: green, DATA6: blue, DATA7: alpha).
 		Ref<Image> image_data5;
@@ -138,5 +160,7 @@ private:
 };
 
 } // namespace zylann::voxel
+
+VARIANT_ENUM_CAST(zylann::voxel::VoxelGeneratorPlanet::HeightSource);
 
 #endif // VOXEL_GENERATOR_PLANET_H
