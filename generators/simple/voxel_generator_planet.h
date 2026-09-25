@@ -111,6 +111,21 @@ public:
 	void set_image_data7(Ref<Image> im);
 	Ref<Image> get_image_data7() const;
 
+	void set_data5_slope_enabled(bool enabled);
+	bool is_data5_slope_enabled() const;
+
+	void set_data5_min_slope_degrees(float degrees);
+	float get_data5_min_slope_degrees() const;
+
+	void set_data5_max_slope_degrees(float degrees);
+	float get_data5_max_slope_degrees() const;
+
+	void set_data5_min_slope_falloff_degrees(float degrees);
+	float get_data5_min_slope_falloff_degrees() const;
+
+	void set_data5_max_slope_falloff_degrees(float degrees);
+	float get_data5_max_slope_falloff_degrees() const;
+
 	void set_radius(float radius);
 	float get_radius() const;
 
@@ -238,6 +253,14 @@ private:
 		float norm_x_data7 = 1.f;
 		float norm_y_data7 = 1.f;
 
+		// When enabled, CHANNEL_DATA5 is derived from the terrain slope instead of `image_data5`.
+		bool data5_slope_enabled = false;
+		float data5_min_slope_degrees = 0.f;
+		float data5_max_slope_degrees = 180.f;
+		// Widths of the linear blend-out bands, located outside the [min, max] range.
+		float data5_min_slope_falloff_degrees = 0.f;
+		float data5_max_slope_falloff_degrees = 0.f;
+
 		// Detail noise (fractal Perlin) blended into the surface for fine detail.
 		Ref<ZN_FastNoiseLite> detail_noise;
 		bool detail_noise_enabled = false;
@@ -271,8 +294,8 @@ private:
 	StdVector<Ref<VoxelPlanetAtmosphericGas>> _atmospheric_composition;
 	StdVector<Ref<VoxelPlanetMineral>> _mineral_composition;
 
-	// Blends the detail noise into the SDF value, attenuated by the G channel (CHANNEL_DATA5)
-	// of image_data5. Returns the SDF unchanged when the noise is disabled or has no amplitude.
+	// Blends the detail noise into the SDF value, attenuated by the CHANNEL_DATA5 value.
+	// Returns the SDF unchanged when the noise is disabled or has no amplitude.
 	float _apply_noise(
 			float sdf,
 			float pos_x,
@@ -280,6 +303,15 @@ private:
 			float pos_z,
 			const Parameters &params
 	) const;
+
+	// Surface SDF without the detail noise.
+	float _base_sdf(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
+
+	// Angle between the surface normal and the radial "up" direction, mapped to 0..1 by the slope range.
+	float _compute_slope_weight(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
+
+	// Value stored in CHANNEL_DATA5: either the slope weight or a sample of `image_data5`.
+	float _compute_data5(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
 };
 
 } // namespace zylann::voxel

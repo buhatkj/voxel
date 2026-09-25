@@ -3,6 +3,7 @@
 #include "../../util/containers/span.h"
 #include "../../util/godot/classes/image.h"
 #include "../../util/godot/core/typed_array.h"
+#include "../../util/math/funcs.h"
 #include "../../util/math/sdf_sphere_heightmap.h"
 #include "../../util/noise/fast_noise_lite/fast_noise_lite.h"
 
@@ -333,6 +334,71 @@ Ref<Image> VoxelGeneratorPlanet::get_image_data7() const {
 	return _image_data7;
 }
 
+void VoxelGeneratorPlanet::set_data5_slope_enabled(bool enabled) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.data5_slope_enabled = enabled;
+	}
+	emit_changed();
+}
+
+bool VoxelGeneratorPlanet::is_data5_slope_enabled() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.data5_slope_enabled;
+}
+
+void VoxelGeneratorPlanet::set_data5_min_slope_degrees(float degrees) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.data5_min_slope_degrees = math::clamp(degrees, 0.f, 180.f);
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_data5_min_slope_degrees() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.data5_min_slope_degrees;
+}
+
+void VoxelGeneratorPlanet::set_data5_max_slope_degrees(float degrees) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.data5_max_slope_degrees = math::clamp(degrees, 0.f, 180.f);
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_data5_max_slope_degrees() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.data5_max_slope_degrees;
+}
+
+void VoxelGeneratorPlanet::set_data5_min_slope_falloff_degrees(float degrees) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.data5_min_slope_falloff_degrees = math::clamp(degrees, 0.f, 180.f);
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_data5_min_slope_falloff_degrees() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.data5_min_slope_falloff_degrees;
+}
+
+void VoxelGeneratorPlanet::set_data5_max_slope_falloff_degrees(float degrees) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.data5_max_slope_falloff_degrees = math::clamp(degrees, 0.f, 180.f);
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_data5_max_slope_falloff_degrees() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.data5_max_slope_falloff_degrees;
+}
+
 void VoxelGeneratorPlanet::set_radius(float radius) {
 	{
 		RWLockWrite wlock(_parameters_lock);
@@ -566,6 +632,93 @@ float VoxelGeneratorPlanet::get_max_surface_temperature() const {
 	return _parameters.max_surface_temperature;
 }
 
+float VoxelGeneratorPlanet::_base_sdf(float pos_x, float pos_y, float pos_z, const Parameters &params) const {
+	if (params.height_source == SOURCE_IMAGE) {
+		if (params.image.is_null()) {
+			return constants::SDF_FAR_OUTSIDE;
+		}
+		return sdf_sphere_heightmap(
+				pos_x,
+				pos_y,
+				pos_z,
+				params.radius,
+				params.factor,
+				**params.image,
+				params.min_height,
+				params.max_height,
+				params.norm_x,
+				params.norm_y
+		);
+	}
+	const float d = Math::Fast_Sqrt(pos_x * pos_x + pos_y * pos_y + pos_z * pos_z) + 0.0001f;
+	float sdf = d - params.radius;
+	if (params.height_noise.is_valid()) {
+		const float amplitude = params.height_noise_amplitude * params.factor;
+		if (amplitude != 0.f) {
+			sdf -= amplitude * params.height_noise->get_noise_3d(pos_x, pos_y, pos_z);
+		}
+	}
+	return sdf;
+}
+
+float VoxelGeneratorPlanet::_compute_slope_weight(
+		float pos_x,
+		float pos_y,
+		float pos_z,
+		const Parameters &params
+) const {
+	// Surface normal from the gradient of the base SDF, sampled one voxel around the position.
+	const float e = 1.f;
+	const float gx = _base_sdf(pos_x + e, pos_y, pos_z, params) - _base_sdf(pos_x - e, pos_y, pos_z, params);
+	const float gy = _base_sdf(pos_x, pos_y + e, pos_z, params) - _base_sdf(pos_x, pos_y - e, pos_z, params);
+	const float gz = _base_sdf(pos_x, pos_y, pos_z + e, params) - _base_sdf(pos_x, pos_y, pos_z - e, params);
+
+	const float g_len = Math::sqrt(gx * gx + gy * gy + gz * gz);
+	const float p_len = Math::sqrt(pos_x * pos_x + pos_y * pos_y + pos_z * pos_z);
+
+	// Degenerate cases (flat field or planet center): consider the surface horizontal.
+	float angle_rad = 0.f;
+	if (g_len > 0.000001f && p_len > 0.000001f) {
+		const float cosine =
+				math::clamp((gx * pos_x + gy * pos_y + gz * pos_z) / (g_len * p_len), -1.f, 1.f);
+		angle_rad = Math::acos(cosine);
+	}
+
+	const float min_rad = math::deg_to_rad(params.data5_min_slope_degrees);
+	const float max_rad = math::deg_to_rad(params.data5_max_slope_degrees);
+	if (angle_rad >= min_rad && angle_rad <= max_rad) {
+		return 1.f;
+	}
+	if (angle_rad < min_rad) {
+		const float falloff_rad = math::deg_to_rad(params.data5_min_slope_falloff_degrees);
+		if (falloff_rad <= 0.f) {
+			return 0.f;
+		}
+		return math::clamp((angle_rad - (min_rad - falloff_rad)) / falloff_rad, 0.f, 1.f);
+	}
+	const float falloff_rad = math::deg_to_rad(params.data5_max_slope_falloff_degrees);
+	if (falloff_rad <= 0.f) {
+		return 0.f;
+	}
+	return math::clamp(((max_rad + falloff_rad) - angle_rad) / falloff_rad, 0.f, 1.f);
+}
+
+float VoxelGeneratorPlanet::_compute_data5(float pos_x, float pos_y, float pos_z, const Parameters &params) const {
+	if (params.data5_slope_enabled) {
+		return _compute_slope_weight(pos_x, pos_y, pos_z, params);
+	}
+	if (params.image_data5.is_null()) {
+		return 0.f;
+	}
+	float u = 0.f;
+	float v = 0.f;
+	compute_planet_uv(pos_x, pos_y, pos_z, u, v);
+	// The G channel holds the DATA5 value.
+	return sample_image_channel_linear(
+			**params.image_data5, u * params.norm_x_data5, v * params.norm_y_data5, 1
+	);
+}
+
 float VoxelGeneratorPlanet::_apply_noise(
 		float sdf,
 		float pos_x,
@@ -573,7 +726,10 @@ float VoxelGeneratorPlanet::_apply_noise(
 		float pos_z,
 		const Parameters &params
 ) const {
-	if (!params.detail_noise_enabled || params.detail_noise.is_null() || params.image_data5.is_null()) {
+	if (!params.detail_noise_enabled || params.detail_noise.is_null()) {
+		return sdf;
+	}
+	if (!params.data5_slope_enabled && params.image_data5.is_null()) {
 		return sdf;
 	}
 	const float amplitude_base = params.detail_noise_amplitude;
@@ -581,18 +737,8 @@ float VoxelGeneratorPlanet::_apply_noise(
 		return sdf;
 	}
 	const ZN_FastNoiseLite &noise = **params.detail_noise;
-	// The G channel (CHANNEL_DATA5) of image_data5 attenuates the noise amplitude:
-	// 0.0 = flat (no noise), 1.0 = full configured amplitude.
-	float u = 0.f;
-	float v = 0.f;
-	compute_planet_uv(pos_x, pos_y, pos_z, u, v);
-	const float meta_g = sample_image_channel_linear(
-			**params.image_data5,
-			u * params.norm_x_data5,
-			v * params.norm_y_data5,
-			1 // G channel
-	);
-	const float attenuation = math::clamp(meta_g, 0.f, 1.f);
+	// The CHANNEL_DATA5 value attenuates the noise amplitude: 0.0 = flat (no noise), 1.0 = full configured amplitude.
+	const float attenuation = math::clamp(_compute_data5(pos_x, pos_y, pos_z, params), 0.f, 1.f);
 	const float amplitude = amplitude_base * attenuation;
 	if (amplitude <= 0.f) {
 		return sdf;
@@ -627,10 +773,10 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 	const Vector3i bs = out_buffer.get_size();
 	const int stride = 1 << input.lod;
 
-	const Image *im_d5 = params.image_data5.is_valid() ? &**params.image_data5 : nullptr;
 	const Image *im_d6 = params.image_data6.is_valid() ? &**params.image_data6 : nullptr;
 	const Image *im_d7 = params.image_data7.is_valid() ? &**params.image_data7 : nullptr;
-	const bool has_any_data_image = (im_d5 != nullptr || im_d6 != nullptr || im_d7 != nullptr);
+	const bool has_any_data_image = (params.image_data5.is_valid() || im_d6 != nullptr || im_d7 != nullptr);
+	const bool has_any_data = has_any_data_image || params.data5_slope_enabled;
 	const ZN_FastNoiseLite *height_noise =
 			(params.height_source == SOURCE_NOISE && params.height_noise.is_valid()) ? &**params.height_noise : nullptr;
 	const float height_noise_amp = params.height_noise_amplitude * params.factor;
@@ -665,14 +811,12 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 				sdf = _apply_noise(sdf, gx, gy, gz, params);
 				out_buffer.set_voxel_f(sdf, x, y, z, VoxelBuffer::CHANNEL_SDF);
 
-				if (has_any_data_image) {
+				if (has_any_data) {
 					float u = 0.f;
 					float v = 0.f;
 					compute_planet_uv(gx, gy, gz, u, v);
 
-					const float meta_g = im_d5 != nullptr
-							? sample_image_channel_linear(*im_d5, u * params.norm_x_data5, v * params.norm_y_data5, 1)
-							: 0.f;
+					const float meta_g = _compute_data5(gx, gy, gz, params);
 					const float meta_b = im_d6 != nullptr
 							? sample_image_channel_linear(*im_d6, u * params.norm_x_data6, v * params.norm_y_data6, 2)
 							: 0.f;
@@ -741,19 +885,7 @@ VoxelSingleValue VoxelGeneratorPlanet::generate_single(Vector3i pos, unsigned in
 		}
 		v.f = _apply_noise(sdf, float(pos.x), float(pos.y), float(pos.z), params);
 	} else if (channel == VoxelBuffer::CHANNEL_DATA5) {
-		if (params.image_data5.is_valid()) {
-			float u = 0.f;
-			float v_coord = 0.f;
-			compute_planet_uv(float(pos.x), float(pos.y), float(pos.z), u, v_coord);
-			v.f = sample_image_channel_linear(
-					**params.image_data5,
-					u * params.norm_x_data5,
-					v_coord * params.norm_y_data5,
-					1
-			);
-		} else {
-			v.f = 0.f;
-		}
+		v.f = _compute_data5(float(pos.x), float(pos.y), float(pos.z), params);
 	} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
 		if (params.image_data6.is_valid()) {
 			float u = 0.f;
@@ -846,18 +978,8 @@ void VoxelGeneratorPlanet::generate_series(
 			}
 		}
 	} else if (channel == VoxelBuffer::CHANNEL_DATA5) {
-		if (params.image_data5.is_valid()) {
-			const Image &image = **params.image_data5;
-			for (size_t i = 0; i < count; ++i) {
-				float u = 0.f;
-				float v = 0.f;
-				compute_planet_uv(positions_x[i], positions_y[i], positions_z[i], u, v);
-				out_values[i] = sample_image_channel_linear(image, u * params.norm_x_data5, v * params.norm_y_data5, 1);
-			}
-		} else {
-			for (size_t i = 0; i < count; ++i) {
-				out_values[i] = 0.f;
-			}
+		for (size_t i = 0; i < count; ++i) {
+			out_values[i] = _compute_data5(positions_x[i], positions_y[i], positions_z[i], params);
 		}
 	} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
 		if (params.image_data6.is_valid()) {
@@ -916,6 +1038,31 @@ void VoxelGeneratorPlanet::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_image_data7", "image"), &VoxelGeneratorPlanet::set_image_data7);
 	ClassDB::bind_method(D_METHOD("get_image_data7"), &VoxelGeneratorPlanet::get_image_data7);
+
+	ClassDB::bind_method(D_METHOD("set_data5_slope_enabled", "enabled"), &VoxelGeneratorPlanet::set_data5_slope_enabled);
+	ClassDB::bind_method(D_METHOD("is_data5_slope_enabled"), &VoxelGeneratorPlanet::is_data5_slope_enabled);
+	ClassDB::bind_method(
+			D_METHOD("set_data5_min_slope_degrees", "degrees"), &VoxelGeneratorPlanet::set_data5_min_slope_degrees
+	);
+	ClassDB::bind_method(D_METHOD("get_data5_min_slope_degrees"), &VoxelGeneratorPlanet::get_data5_min_slope_degrees);
+	ClassDB::bind_method(
+			D_METHOD("set_data5_max_slope_degrees", "degrees"), &VoxelGeneratorPlanet::set_data5_max_slope_degrees
+	);
+	ClassDB::bind_method(D_METHOD("get_data5_max_slope_degrees"), &VoxelGeneratorPlanet::get_data5_max_slope_degrees);
+	ClassDB::bind_method(
+			D_METHOD("set_data5_min_slope_falloff_degrees", "degrees"),
+			&VoxelGeneratorPlanet::set_data5_min_slope_falloff_degrees
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_data5_min_slope_falloff_degrees"), &VoxelGeneratorPlanet::get_data5_min_slope_falloff_degrees
+	);
+	ClassDB::bind_method(
+			D_METHOD("set_data5_max_slope_falloff_degrees", "degrees"),
+			&VoxelGeneratorPlanet::set_data5_max_slope_falloff_degrees
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_data5_max_slope_falloff_degrees"), &VoxelGeneratorPlanet::get_data5_max_slope_falloff_degrees
+	);
 
 	ClassDB::bind_method(D_METHOD("set_radius", "radius"), &VoxelGeneratorPlanet::set_radius);
 	ClassDB::bind_method(D_METHOD("get_radius"), &VoxelGeneratorPlanet::get_radius);
@@ -1025,6 +1172,29 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			PropertyInfo(Variant::OBJECT, "image_data7", PROPERTY_HINT_RESOURCE_TYPE, Image::get_class_static()),
 			"set_image_data7",
 			"get_image_data7"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::BOOL, "data5_slope_enabled"), "set_data5_slope_enabled", "is_data5_slope_enabled"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "data5_min_slope_degrees", PROPERTY_HINT_RANGE, "0.0, 180.0, 0.1"),
+			"set_data5_min_slope_degrees",
+			"get_data5_min_slope_degrees"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "data5_max_slope_degrees", PROPERTY_HINT_RANGE, "0.0, 180.0, 0.1"),
+			"set_data5_max_slope_degrees",
+			"get_data5_max_slope_degrees"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "data5_min_slope_falloff_degrees", PROPERTY_HINT_RANGE, "0.0, 180.0, 0.1"),
+			"set_data5_min_slope_falloff_degrees",
+			"get_data5_min_slope_falloff_degrees"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "data5_max_slope_falloff_degrees", PROPERTY_HINT_RANGE, "0.0, 180.0, 0.1"),
+			"set_data5_max_slope_falloff_degrees",
+			"get_data5_max_slope_falloff_degrees"
 	);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius"), "set_radius", "get_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "factor"), "set_factor", "get_factor");
