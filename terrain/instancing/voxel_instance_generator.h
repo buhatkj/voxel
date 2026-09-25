@@ -11,10 +11,13 @@
 #include "up_mode.h"
 
 #include <limits>
+#include <memory>
 
 namespace zylann::voxel {
 
 class VoxelGenerator;
+class VoxelBuffer;
+class VoxelData;
 
 // TODO This may have to be moved to the meshing thread some day
 
@@ -69,7 +72,19 @@ public:
 			const uint8_t octant_mask,
 			// This is block size in world space, not relative to LOD index
 			const float block_size,
-			Ref<VoxelGenerator> voxel_generator
+			Ref<VoxelGenerator> voxel_generator,
+			std::shared_ptr<const VoxelBuffer> voxel_data_snapshot = nullptr,
+			Vector3i voxel_data_origin = Vector3i(),
+			int voxel_data_step = 1
+	);
+
+	static std::shared_ptr<const VoxelBuffer> create_voxel_data_snapshot(
+			VoxelData &voxel_data,
+			Vector3i grid_position,
+			unsigned int lod_index,
+			unsigned int base_block_size,
+			Vector3i &out_origin,
+			int &out_voxel_step
 	);
 
 	void set_density(float d);
@@ -158,6 +173,28 @@ public:
 	void set_voxel_material_filter_threshold(const float p_threshold);
 	float get_voxel_material_filter_threshold() const;
 
+	void set_data5_filter_enabled(bool enabled);
+	bool is_data5_filter_enabled() const;
+	void set_data5_filter_min(float value);
+	float get_data5_filter_min() const;
+	void set_data5_filter_max(float value);
+	float get_data5_filter_max() const;
+
+	void set_data6_filter_enabled(bool enabled);
+	bool is_data6_filter_enabled() const;
+	void set_data6_filter_min(float value);
+	float get_data6_filter_min() const;
+	void set_data6_filter_max(float value);
+	float get_data6_filter_max() const;
+
+	void set_data7_filter_enabled(bool enabled);
+	bool is_data7_filter_enabled() const;
+	void set_data7_filter_min(float value);
+	float get_data7_filter_min() const;
+	void set_data7_filter_max(float value);
+	float get_data7_filter_max() const;
+	bool has_data_channel_filter() const;
+
 	void set_snap_to_generator_sdf_enabled(bool enabled);
 	bool get_snap_to_generator_sdf_enabled() const;
 
@@ -186,7 +223,6 @@ private:
 
 	PackedInt32Array _b_get_voxel_material_filter_array() const;
 	void _b_set_voxel_material_filter_array(PackedInt32Array material_indices);
-
 	static void _bind_methods();
 
 	float _density = 0.1f;
@@ -217,6 +253,14 @@ private:
 	bool _voxel_material_filter_enabled = false;
 	uint32_t _voxel_material_filter_mask = 1;
 	float _voxel_material_filter_threshold = 0.5f;
+	struct DataChannelFilter {
+		bool enabled = false;
+		float min = 0.f;
+		float max = 1.f;
+	};
+	DataChannelFilter _data5_filter;
+	DataChannelFilter _data6_filter;
+	DataChannelFilter _data7_filter;
 
 	struct GeneratorSDFSnapSettings {
 		bool enabled = false;

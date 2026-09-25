@@ -284,7 +284,7 @@ public:
 
 	VoxelData &get_storage() const override;
 
-	inline std::shared_ptr<VoxelData> get_storage_shared() const {
+	inline std::shared_ptr<VoxelData> get_storage_shared() const override {
 		return _data;
 	}
 

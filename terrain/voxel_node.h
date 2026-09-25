@@ -33,6 +33,7 @@ public:
 	virtual Ref<VoxelGenerator> get_generator() const;
 
 	virtual VoxelData &get_storage() const;
+	virtual std::shared_ptr<VoxelData> get_storage_shared() const = 0;
 
 	void set_format(Ref<godot::VoxelFormat> format);
 	Ref<godot::VoxelFormat> get_format() const;

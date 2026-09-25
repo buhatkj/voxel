@@ -173,6 +173,7 @@ void run_voxel_tests(const testing::TestOptions &options) {
 #endif
 #ifdef VOXEL_ENABLE_INSTANCER
 	VOXEL_TEST(test_instance_generator_material_filter_issue774);
+	VOXEL_TEST(test_instance_generator_data_channel_filter);
 #endif
 	VOXEL_TEST(test_spot_noise);
 	VOXEL_TEST(test_voxel_graph_multiple_function_instances);

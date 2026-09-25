@@ -31,7 +31,10 @@ void GenerateInstancesBlockTask::run(ThreadedTaskContext &ctx) {
 			up_mode,
 			gen_octant_mask,
 			mesh_block_size,
-			voxel_generator
+			voxel_generator,
+			voxel_data_snapshot,
+			voxel_data_origin,
+			voxel_data_step
 	);
 
 	for (const Transform3f &t : tls_generated_transforms) {

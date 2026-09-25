@@ -28,6 +28,9 @@ public:
 	int32_t index_range_end = -1;
 	Ref<VoxelInstanceGenerator> generator;
 	Ref<VoxelGenerator> voxel_generator;
+	std::shared_ptr<const VoxelBuffer> voxel_data_snapshot;
+	Vector3i voxel_data_origin;
+	int voxel_data_step = 1;
 	// Can be pre-populated by edited transforms
 	StdVector<Transform3f> transforms;
 	std::shared_ptr<InstancerTaskOutputQueue> output_queue;

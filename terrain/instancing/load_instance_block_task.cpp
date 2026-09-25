@@ -18,6 +18,7 @@ LoadInstanceChunkTask::LoadInstanceChunkTask(
 		Ref<VoxelGenerator> voxel_generator,
 		std::shared_ptr<InstancerQuickReloadingCache> quick_reload_cache,
 		Ref<VoxelInstanceLibrary> library,
+		std::shared_ptr<VoxelData> voxel_data,
 		Array mesh_arrays,
 		const int32_t vertex_range_end,
 		const int32_t index_range_end,
@@ -32,6 +33,7 @@ LoadInstanceChunkTask::LoadInstanceChunkTask(
 		_voxel_generator(voxel_generator),
 		_quick_reload_cache(quick_reload_cache),
 		_library(library),
+		_voxel_data(voxel_data),
 		_mesh_arrays(mesh_arrays),
 		_vertex_range_end(vertex_range_end),
 		_index_range_end(index_range_end),
@@ -208,6 +210,25 @@ void LoadInstanceChunkTask::run(ThreadedTaskContext &ctx) {
 		_library->get_packed_items_at_lod(items, _lod_index);
 
 		if (items.size() > 0) {
+			std::shared_ptr<const VoxelBuffer> voxel_data_snapshot;
+			Vector3i voxel_data_origin;
+			int voxel_data_step = 1;
+			for (const VoxelInstanceLibrary::PackedItem &item : items) {
+				if (item.generator.is_valid() && item.generator->has_data_channel_filter()) {
+					if (_voxel_data != nullptr) {
+						voxel_data_snapshot = VoxelInstanceGenerator::create_voxel_data_snapshot(
+								*_voxel_data,
+								_render_grid_position,
+								_lod_index,
+								_instance_block_size,
+								voxel_data_origin,
+								voxel_data_step
+						);
+					}
+					break;
+				}
+			}
+
 			BufferedTaskScheduler &task_scheduler = BufferedTaskScheduler::get_for_current_thread();
 
 			for (const VoxelInstanceLibrary::PackedItem &item : items) {
@@ -245,6 +266,9 @@ void LoadInstanceChunkTask::run(ThreadedTaskContext &ctx) {
 						task->index_range_end = _index_range_end;
 						task->generator = item.generator;
 						task->voxel_generator = _voxel_generator;
+						task->voxel_data_snapshot = voxel_data_snapshot;
+						task->voxel_data_origin = voxel_data_origin;
+						task->voxel_data_step = voxel_data_step;
 						task->transforms = std::move(layer.transforms);
 						task->output_queue = _output_queue;
 

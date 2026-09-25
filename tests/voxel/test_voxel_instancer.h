@@ -5,6 +5,7 @@ namespace zylann::voxel::tests {
 
 void test_instance_data_serialization();
 void test_instance_generator_material_filter_issue774();
+void test_instance_generator_data_channel_filter();
 
 } // namespace zylann::voxel::tests
 

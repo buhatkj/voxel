@@ -2,6 +2,7 @@
 #include "../../generators/voxel_generator.h"
 #include "../../streams/instance_data.h"
 #include "../../terrain/instancing/voxel_instance_generator.h"
+#include "../../storage/voxel_buffer.h"
 #include "../../util/godot/classes/array_mesh.h"
 #include "../../util/godot/core/packed_arrays.h"
 #include "../../util/math/conv.h"
@@ -217,6 +218,93 @@ void test_instance_generator_material_filter_issue774() {
 	);
 
 	ZN_TEST_ASSERT(transforms.size() > 0);
+}
+
+void test_instance_generator_data_channel_filter() {
+	Array mesh_arrays;
+	PackedVector3Array vertices;
+	vertices.push_back(Vector3(0, 0, 0));
+	vertices.push_back(Vector3(1, 0, 0));
+	vertices.push_back(Vector3(0, 0, 1));
+	PackedVector3Array normals;
+	normals.push_back(Vector3(0, 1, 0));
+	normals.push_back(Vector3(0, 1, 0));
+	normals.push_back(Vector3(0, 1, 0));
+	PackedInt32Array indices;
+	indices.push_back(0);
+	indices.push_back(1);
+	indices.push_back(2);
+	mesh_arrays.resize(ArrayMesh::ARRAY_MAX);
+	mesh_arrays[ArrayMesh::ARRAY_VERTEX] = vertices;
+	mesh_arrays[ArrayMesh::ARRAY_NORMAL] = normals;
+	mesh_arrays[ArrayMesh::ARRAY_INDEX] = indices;
+
+	auto snapshot = std::make_shared<VoxelBuffer>(VoxelBuffer::ALLOCATOR_DEFAULT);
+	snapshot->create(Vector3i(2, 2, 2));
+	for (unsigned int channel = VoxelBuffer::CHANNEL_DATA5; channel <= VoxelBuffer::CHANNEL_DATA7; ++channel) {
+		snapshot->fill_f(0.f, channel);
+	}
+
+	Ref<VoxelInstanceGenerator> generator;
+	generator.instantiate();
+	generator->set_emit_mode(VoxelInstanceGenerator::EMIT_ONE_PER_TRIANGLE);
+	std::shared_ptr<const VoxelBuffer> immutable_snapshot = snapshot;
+	StdVector<Transform3f> transforms;
+
+	auto test_channel = [&](auto set_enabled, auto set_min) {
+		set_enabled(true);
+		set_min(1.f);
+		generator->generate_transforms(
+				transforms,
+				Vector3i(),
+				0,
+				0,
+				mesh_arrays,
+				-1,
+				-1,
+				UP_MODE_POSITIVE_Y,
+				0xff,
+				1.f,
+				Ref<VoxelGenerator>(),
+				immutable_snapshot,
+				Vector3i(),
+				1
+		);
+		ZN_TEST_ASSERT(transforms.size() == 0);
+
+		set_min(-1.f);
+		generator->generate_transforms(
+				transforms,
+				Vector3i(),
+				0,
+				0,
+				mesh_arrays,
+				-1,
+				-1,
+				UP_MODE_POSITIVE_Y,
+				0xff,
+				1.f,
+				Ref<VoxelGenerator>(),
+				immutable_snapshot,
+				Vector3i(),
+				1
+		);
+		ZN_TEST_ASSERT(transforms.size() == 1);
+		set_enabled(false);
+	};
+
+	test_channel(
+			[&](const bool enabled) { generator->set_data5_filter_enabled(enabled); },
+			[&](const float value) { generator->set_data5_filter_min(value); }
+	);
+	test_channel(
+			[&](const bool enabled) { generator->set_data6_filter_enabled(enabled); },
+			[&](const float value) { generator->set_data6_filter_min(value); }
+	);
+	test_channel(
+			[&](const bool enabled) { generator->set_data7_filter_enabled(enabled); },
+			[&](const float value) { generator->set_data7_filter_min(value); }
+	);
 }
 
 } // namespace zylann::voxel::tests

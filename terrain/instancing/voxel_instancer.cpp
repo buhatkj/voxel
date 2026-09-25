@@ -1037,6 +1037,22 @@ void VoxelInstancer::regenerate_layer(uint16_t layer_id, bool regenerate_blocks)
 
 		const int mesh_block_size = 1 << _parent_mesh_block_size_po2;
 		const int lod_block_size = mesh_block_size << lod_index;
+		std::shared_ptr<const VoxelBuffer> voxel_data_snapshot;
+		Vector3i voxel_data_origin;
+		int voxel_data_step = 1;
+		if (item->get_generator()->has_data_channel_filter()) {
+			std::shared_ptr<VoxelData> storage = _parent->get_storage_shared();
+			if (storage != nullptr) {
+				voxel_data_snapshot = VoxelInstanceGenerator::create_voxel_data_snapshot(
+						*storage,
+						block.grid_position,
+						lod_index,
+						mesh_block_size,
+						voxel_data_origin,
+						voxel_data_step
+				);
+			}
+		}
 
 		item->get_generator()->generate_transforms(
 				transform_cache,
@@ -1049,7 +1065,10 @@ void VoxelInstancer::regenerate_layer(uint16_t layer_id, bool regenerate_blocks)
 				_up_mode,
 				octant_mask,
 				lod_block_size,
-				voxel_generator
+				voxel_generator,
+				voxel_data_snapshot,
+				voxel_data_origin,
+				voxel_data_step
 		);
 
 		if (render_to_data_factor == 2 && octant_mask != 0xff) {
@@ -1852,6 +1871,7 @@ void VoxelInstancer::create_render_blocks(
 			generator,
 			lod.quick_reload_cache,
 			_library,
+			_parent->get_storage_shared(),
 			surface_arrays,
 			vertex_range_end,
 			index_range_end,

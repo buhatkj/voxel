@@ -1,6 +1,7 @@
 #include "voxel_instance_generator.h"
 #include "../../constants/voxel_string_names.h"
 #include "../../generators/voxel_generator.h"
+#include "../../storage/voxel_data.h"
 #include "../../storage/voxel_buffer.h"
 #include "../../util/containers/container_funcs.h"
 #include "../../util/godot/classes/array_mesh.h"
@@ -966,9 +967,17 @@ void VoxelInstanceGenerator::generate_transforms(
 		const UpMode up_mode,
 		const uint8_t octant_mask,
 		const float block_size,
-		Ref<VoxelGenerator> voxel_generator
+		Ref<VoxelGenerator> voxel_generator,
+		std::shared_ptr<const VoxelBuffer> voxel_data_snapshot,
+		Vector3i voxel_data_origin,
+		int voxel_data_step
 ) {
 	ZN_PROFILE_SCOPE();
+	if (has_data_channel_filter() && voxel_data_snapshot == nullptr) {
+		out_transforms.clear();
+		ZN_PRINT_ERROR_ONCE("Voxel data channel filters require a voxel data snapshot");
+		return;
+	}
 
 	if (_density <= 0.f) {
 		return;
@@ -1015,6 +1024,7 @@ void VoxelInstanceGenerator::generate_transforms(
 
 	const bool voxel_material_filter_enabled = _voxel_material_filter_enabled;
 	const uint32_t voxel_material_filter_mask = _voxel_material_filter_mask;
+	const bool data_channel_filter_active = has_data_channel_filter();
 
 	const bool index_cache_used = voxel_material_filter_enabled;
 	const bool barycentrics_used = voxel_material_filter_enabled && _emit_mode != EMIT_FROM_VERTICES;
@@ -1289,9 +1299,41 @@ void VoxelInstanceGenerator::generate_transforms(
 	const Vector3f fixed_look_axis = up_mode == UP_MODE_POSITIVE_Y ? Vector3f(1, 0, 0) : Vector3f(0, 1, 0);
 	const Vector3f fixed_look_axis_alternative = up_mode == UP_MODE_POSITIVE_Y ? Vector3f(0, 1, 0) : Vector3f(1, 0, 0);
 	const Vector3f mesh_block_origin = to_vec3f(grid_position * block_size);
+	const Vector3f voxel_data_origin_f = to_vec3f(voxel_data_origin);
+	auto passes_data_channel_filter = [voxel_data_snapshot](
+			const DataChannelFilter &filter, const Vector3i sample_index, const unsigned int channel
+	) {
+		if (!filter.enabled) {
+			return true;
+		}
+		const float value = voxel_data_snapshot->get_voxel_f(sample_index, channel);
+		return value >= filter.min && value <= filter.max;
+	};
 
 	// Calculate orientations and scales
 	for (size_t vertex_index = 0; vertex_index < vertex_cache.size(); ++vertex_index) {
+		if (data_channel_filter_active) {
+			const Vector3f sample_position = mesh_block_origin + vertex_cache[vertex_index] - voxel_data_origin_f;
+			const Vector3i sample_index(
+					math::clamp(
+							static_cast<int>(sample_position.x / voxel_data_step), 0, voxel_data_snapshot->get_size().x - 1
+					),
+					math::clamp(
+							static_cast<int>(sample_position.y / voxel_data_step), 0, voxel_data_snapshot->get_size().y - 1
+					),
+					math::clamp(
+							static_cast<int>(sample_position.z / voxel_data_step), 0, voxel_data_snapshot->get_size().z - 1
+					)
+			);
+			const bool passes_data_filter =
+					passes_data_channel_filter(_data5_filter, sample_index, VoxelBuffer::CHANNEL_DATA5) &&
+					passes_data_channel_filter(_data6_filter, sample_index, VoxelBuffer::CHANNEL_DATA6) &&
+					passes_data_channel_filter(_data7_filter, sample_index, VoxelBuffer::CHANNEL_DATA7);
+			if (!passes_data_filter) {
+				continue;
+			}
+		}
+
 		Transform3f t;
 		t.origin = vertex_cache[vertex_index];
 
@@ -1683,6 +1725,36 @@ void VoxelInstanceGenerator::set_random_rotation(bool enabled) {
 	}
 }
 
+std::shared_ptr<const VoxelBuffer> VoxelInstanceGenerator::create_voxel_data_snapshot(
+		VoxelData &voxel_data,
+		const Vector3i grid_position,
+		const unsigned int lod_index,
+		const unsigned int base_block_size,
+		Vector3i &out_origin,
+		int &out_voxel_step
+) {
+	out_voxel_step = 1 << lod_index;
+	out_origin = grid_position * (base_block_size * out_voxel_step);
+	const int snapshot_size = base_block_size + 1;
+	auto snapshot = std::make_shared<VoxelBuffer>(VoxelBuffer::ALLOCATOR_DEFAULT);
+	snapshot->create(Vector3i(snapshot_size, snapshot_size, snapshot_size));
+	voxel_data.get_format().configure_buffer(*snapshot);
+
+	for (unsigned int channel_offset = 0; channel_offset < 3; ++channel_offset) {
+		const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + channel_offset;
+		for (int z = 0; z < snapshot_size; ++z) {
+			for (int y = 0; y < snapshot_size; ++y) {
+				for (int x = 0; x < snapshot_size; ++x) {
+					const Vector3i world_position = out_origin + Vector3i(x, y, z) * out_voxel_step;
+					snapshot->set_voxel_f(voxel_data.get_voxel_f(world_position, channel), x, y, z, channel);
+				}
+			}
+		}
+	}
+
+	return snapshot;
+}
+
 bool VoxelInstanceGenerator::get_random_rotation() const {
 	return _random_rotation;
 }
@@ -1849,6 +1921,36 @@ void VoxelInstanceGenerator::set_voxel_material_filter_threshold(const float p_t
 float VoxelInstanceGenerator::get_voxel_material_filter_threshold() const {
 	return _voxel_material_filter_threshold;
 }
+
+bool VoxelInstanceGenerator::has_data_channel_filter() const {
+	return _data5_filter.enabled || _data6_filter.enabled || _data7_filter.enabled;
+}
+
+#define VOXEL_DEFINE_DATA_CHANNEL_FILTER(channel_name, filter_member) \
+	void VoxelInstanceGenerator::set_##channel_name##_filter_enabled(const bool enabled) { \
+		if (_##filter_member.enabled == enabled) return; \
+		_##filter_member.enabled = enabled; \
+		emit_changed(); \
+	} \
+	bool VoxelInstanceGenerator::is_##channel_name##_filter_enabled() const { return _##filter_member.enabled; } \
+	void VoxelInstanceGenerator::set_##channel_name##_filter_min(const float value) { \
+		if (_##filter_member.min == value) return; \
+		_##filter_member.min = value; \
+		emit_changed(); \
+	} \
+	float VoxelInstanceGenerator::get_##channel_name##_filter_min() const { return _##filter_member.min; } \
+	void VoxelInstanceGenerator::set_##channel_name##_filter_max(const float value) { \
+		if (_##filter_member.max == value) return; \
+		_##filter_member.max = value; \
+		emit_changed(); \
+	} \
+	float VoxelInstanceGenerator::get_##channel_name##_filter_max() const { return _##filter_member.max; }
+
+VOXEL_DEFINE_DATA_CHANNEL_FILTER(data5, data5_filter)
+VOXEL_DEFINE_DATA_CHANNEL_FILTER(data6, data6_filter)
+VOXEL_DEFINE_DATA_CHANNEL_FILTER(data7, data7_filter)
+
+#undef VOXEL_DEFINE_DATA_CHANNEL_FILTER
 
 void VoxelInstanceGenerator::set_snap_to_generator_sdf_enabled(bool enabled) {
 	if (_gen_sdf_snap_settings.enabled == enabled) {
@@ -2090,6 +2192,32 @@ void VoxelInstanceGenerator::_bind_methods() {
 			D_METHOD("set_voxel_texture_filter_threshold", "threshold"), &Self::set_voxel_material_filter_threshold
 	);
 	ClassDB::bind_method(D_METHOD("get_voxel_texture_filter_threshold"), &Self::get_voxel_material_filter_threshold);
+	ClassDB::bind_method(
+			D_METHOD("set_data5_filter_enabled", "enabled"), &Self::set_data5_filter_enabled
+	);
+	ClassDB::bind_method(D_METHOD("is_data5_filter_enabled"), &Self::is_data5_filter_enabled);
+	ClassDB::bind_method(D_METHOD("set_data5_filter_min", "value"), &Self::set_data5_filter_min);
+	ClassDB::bind_method(D_METHOD("get_data5_filter_min"), &Self::get_data5_filter_min);
+	ClassDB::bind_method(D_METHOD("set_data5_filter_max", "value"), &Self::set_data5_filter_max);
+	ClassDB::bind_method(D_METHOD("get_data5_filter_max"), &Self::get_data5_filter_max);
+
+	ClassDB::bind_method(
+			D_METHOD("set_data6_filter_enabled", "enabled"), &Self::set_data6_filter_enabled
+	);
+	ClassDB::bind_method(D_METHOD("is_data6_filter_enabled"), &Self::is_data6_filter_enabled);
+	ClassDB::bind_method(D_METHOD("set_data6_filter_min", "value"), &Self::set_data6_filter_min);
+	ClassDB::bind_method(D_METHOD("get_data6_filter_min"), &Self::get_data6_filter_min);
+	ClassDB::bind_method(D_METHOD("set_data6_filter_max", "value"), &Self::set_data6_filter_max);
+	ClassDB::bind_method(D_METHOD("get_data6_filter_max"), &Self::get_data6_filter_max);
+
+	ClassDB::bind_method(
+			D_METHOD("set_data7_filter_enabled", "enabled"), &Self::set_data7_filter_enabled
+	);
+	ClassDB::bind_method(D_METHOD("is_data7_filter_enabled"), &Self::is_data7_filter_enabled);
+	ClassDB::bind_method(D_METHOD("set_data7_filter_min", "value"), &Self::set_data7_filter_min);
+	ClassDB::bind_method(D_METHOD("get_data7_filter_min"), &Self::get_data7_filter_min);
+	ClassDB::bind_method(D_METHOD("set_data7_filter_max", "value"), &Self::set_data7_filter_max);
+	ClassDB::bind_method(D_METHOD("get_data7_filter_max"), &Self::get_data7_filter_max);
 
 	ClassDB::bind_method(
 			D_METHOD("set_voxel_texture_filter_array", "texture_indices"), &Self::_b_set_voxel_material_filter_array
@@ -2272,6 +2400,21 @@ void VoxelInstanceGenerator::_bind_methods() {
 			"set_voxel_texture_filter_threshold",
 			"get_voxel_texture_filter_threshold"
 	);
+
+	ADD_GROUP("DATA5 filtering", "data5_filter_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "data5_filter_enabled"), "set_data5_filter_enabled", "is_data5_filter_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "data5_filter_min"), "set_data5_filter_min", "get_data5_filter_min");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "data5_filter_max"), "set_data5_filter_max", "get_data5_filter_max");
+
+	ADD_GROUP("DATA6 filtering", "data6_filter_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "data6_filter_enabled"), "set_data6_filter_enabled", "is_data6_filter_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "data6_filter_min"), "set_data6_filter_min", "get_data6_filter_min");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "data6_filter_max"), "set_data6_filter_max", "get_data6_filter_max");
+
+	ADD_GROUP("DATA7 filtering", "data7_filter_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "data7_filter_enabled"), "set_data7_filter_enabled", "is_data7_filter_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "data7_filter_min"), "set_data7_filter_min", "get_data7_filter_min");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "data7_filter_max"), "set_data7_filter_max", "get_data7_filter_max");
 
 	ADD_GROUP("Snap to generator SDF", "snap_to_generator_sdf_");
 

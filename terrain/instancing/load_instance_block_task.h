@@ -2,6 +2,7 @@
 #define VOXEL_LOAD_INSTANCE_BLOCK_TASK_H
 
 #include "../../generators/voxel_generator.h"
+#include "../../storage/voxel_data.h"
 #include "../../streams/voxel_stream.h"
 #include "../../util/godot/core/array.h"
 #include "../../util/math/vector3i.h"
@@ -25,6 +26,7 @@ public:
 			Ref<VoxelGenerator> voxel_generator,
 			std::shared_ptr<InstancerQuickReloadingCache> quick_reload_cache,
 			Ref<VoxelInstanceLibrary> library,
+			std::shared_ptr<VoxelData> voxel_data,
 			Array mesh_arrays,
 			const int32_t vertex_range_end,
 			const int32_t index_range_end,
@@ -47,6 +49,7 @@ private:
 	Ref<VoxelGenerator> _voxel_generator;
 	std::shared_ptr<InstancerQuickReloadingCache> _quick_reload_cache;
 	Ref<VoxelInstanceLibrary> _library;
+	std::shared_ptr<VoxelData> _voxel_data;
 	Array _mesh_arrays;
 	const int32_t _vertex_range_end;
 	const int32_t _index_range_end;
