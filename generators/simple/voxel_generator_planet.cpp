@@ -404,6 +404,32 @@ float VoxelGeneratorPlanet::get_data5_max_slope_falloff_degrees() const {
 	return _parameters.data5_max_slope_falloff_degrees;
 }
 
+void VoxelGeneratorPlanet::set_data6_water_table_enabled(bool enabled) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.data6_water_table_enabled = enabled;
+	}
+	emit_changed();
+}
+
+bool VoxelGeneratorPlanet::is_data6_water_table_enabled() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.data6_water_table_enabled;
+}
+
+void VoxelGeneratorPlanet::set_data6_water_table_max_distance(float distance) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.data6_water_table_max_distance = math::max(distance, 0.f);
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_data6_water_table_max_distance() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.data6_water_table_max_distance;
+}
+
 void VoxelGeneratorPlanet::set_radius(float radius) {
 	{
 		RWLockWrite wlock(_parameters_lock);
@@ -753,6 +779,34 @@ float VoxelGeneratorPlanet::_compute_data5(
 	);
 }
 
+float VoxelGeneratorPlanet::_compute_data6(float pos_x, float pos_y, float pos_z, const Parameters &params) const {
+	if (params.data6_water_table_enabled) {
+		const float max_distance = params.data6_water_table_max_distance;
+		if (max_distance <= 0.f) {
+			return 0.f;
+		}
+		const float d = Math::Fast_Sqrt(pos_x * pos_x + pos_y * pos_y + pos_z * pos_z);
+		const float t = Math::abs(d - float(params.water_table_radius)) / max_distance;
+		if (t >= 1.f) {
+			return 0.f;
+		}
+		// Exponential falloff, rescaled so it reaches exactly 0 at `max_distance`.
+		constexpr float k = 5.f;
+		constexpr float floor_value = 0.006737947f; // exp(-k)
+		return (Math::exp(-k * t) - floor_value) / (1.f - floor_value);
+	}
+	if (params.image_data6.is_null()) {
+		return 0.f;
+	}
+	float u = 0.f;
+	float v = 0.f;
+	compute_planet_uv(pos_x, pos_y, pos_z, u, v);
+	// The B channel holds the DATA6 value.
+	return sample_image_channel_linear(
+			**params.image_data6, u * params.norm_x_data6, v * params.norm_y_data6, 2
+	);
+}
+
 float VoxelGeneratorPlanet::_apply_noise(
 		float sdf,
 		float pos_x,
@@ -804,10 +858,14 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 	const int stride = 1 << input.lod;
 	const float stride_f = float(stride);
 
-	const Image *im_d6 = params.image_data6.is_valid() ? &**params.image_data6 : nullptr;
 	const Image *im_d7 = params.image_data7.is_valid() ? &**params.image_data7 : nullptr;
-	const bool has_any_data_image = (params.image_data5.is_valid() || im_d6 != nullptr || im_d7 != nullptr);
-	const bool has_any_data = has_any_data_image || params.data5_slope_enabled;
+	const Image *im_d6 = (!params.data6_water_table_enabled && params.image_data6.is_valid())
+			? &**params.image_data6
+			: nullptr;
+	const bool has_any_data_image =
+			(params.image_data5.is_valid() || params.image_data6.is_valid() || im_d7 != nullptr);
+	const bool has_any_data =
+			has_any_data_image || params.data5_slope_enabled || params.data6_water_table_enabled;
 	const bool needs_uv = (im_d6 != nullptr || im_d7 != nullptr);
 	const ZN_FastNoiseLite *height_noise =
 			(params.height_source == SOURCE_NOISE && params.height_noise.is_valid()) ? &**params.height_noise : nullptr;
@@ -853,9 +911,10 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 						compute_planet_uv(gx, gy, gz, u, v);
 					}
 
+					// The water-table variant does not need UVs, so the image sample is kept inline to share them.
 					const float meta_b = im_d6 != nullptr
 							? sample_image_channel_linear(*im_d6, u * params.norm_x_data6, v * params.norm_y_data6, 2)
-							: 0.f;
+							: (params.data6_water_table_enabled ? _compute_data6(gx, gy, gz, params) : 0.f);
 					const float meta_a = im_d7 != nullptr
 							? sample_image_channel_linear(*im_d7, u * params.norm_x_data7, v * params.norm_y_data7, 3)
 							: 0.f;
@@ -925,19 +984,7 @@ VoxelSingleValue VoxelGeneratorPlanet::generate_single(Vector3i pos, unsigned in
 		const float base_sdf = _base_sdf(float(pos.x), float(pos.y), float(pos.z), params);
 		v.f = _compute_data5(float(pos.x), float(pos.y), float(pos.z), base_sdf, 1.f, params);
 	} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
-		if (params.image_data6.is_valid()) {
-			float u = 0.f;
-			float v_coord = 0.f;
-			compute_planet_uv(float(pos.x), float(pos.y), float(pos.z), u, v_coord);
-			v.f = sample_image_channel_linear(
-					**params.image_data6,
-					u * params.norm_x_data6,
-					v_coord * params.norm_y_data6,
-					2
-			);
-		} else {
-			v.f = 0.f;
-		}
+		v.f = _compute_data6(float(pos.x), float(pos.y), float(pos.z), params);
 	} else if (channel == VoxelBuffer::CHANNEL_DATA7) {
 		if (params.image_data7.is_valid()) {
 			float u = 0.f;
@@ -1024,18 +1071,8 @@ void VoxelGeneratorPlanet::generate_series(
 			out_values[i] = _compute_data5(positions_x[i], positions_y[i], positions_z[i], base_sdf, 1.f, params);
 		}
 	} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
-		if (params.image_data6.is_valid()) {
-			const Image &image = **params.image_data6;
-			for (size_t i = 0; i < count; ++i) {
-				float u = 0.f;
-				float v = 0.f;
-				compute_planet_uv(positions_x[i], positions_y[i], positions_z[i], u, v);
-				out_values[i] = sample_image_channel_linear(image, u * params.norm_x_data6, v * params.norm_y_data6, 2);
-			}
-		} else {
-			for (size_t i = 0; i < count; ++i) {
-				out_values[i] = 0.f;
-			}
+		for (size_t i = 0; i < count; ++i) {
+			out_values[i] = _compute_data6(positions_x[i], positions_y[i], positions_z[i], params);
 		}
 	} else if (channel == VoxelBuffer::CHANNEL_DATA7) {
 		if (params.image_data7.is_valid()) {
@@ -1104,6 +1141,18 @@ void VoxelGeneratorPlanet::_bind_methods() {
 	);
 	ClassDB::bind_method(
 			D_METHOD("get_data5_max_slope_falloff_degrees"), &VoxelGeneratorPlanet::get_data5_max_slope_falloff_degrees
+	);
+
+	ClassDB::bind_method(
+			D_METHOD("set_data6_water_table_enabled", "enabled"), &VoxelGeneratorPlanet::set_data6_water_table_enabled
+	);
+	ClassDB::bind_method(D_METHOD("is_data6_water_table_enabled"), &VoxelGeneratorPlanet::is_data6_water_table_enabled);
+	ClassDB::bind_method(
+			D_METHOD("set_data6_water_table_max_distance", "distance"),
+			&VoxelGeneratorPlanet::set_data6_water_table_max_distance
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_data6_water_table_max_distance"), &VoxelGeneratorPlanet::get_data6_water_table_max_distance
 	);
 
 	ClassDB::bind_method(D_METHOD("set_radius", "radius"), &VoxelGeneratorPlanet::set_radius);
@@ -1237,6 +1286,16 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			PropertyInfo(Variant::FLOAT, "data5_max_slope_falloff_degrees", PROPERTY_HINT_RANGE, "0.0, 180.0, 0.1"),
 			"set_data5_max_slope_falloff_degrees",
 			"get_data5_max_slope_falloff_degrees"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::BOOL, "data6_water_table_enabled"),
+			"set_data6_water_table_enabled",
+			"is_data6_water_table_enabled"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "data6_water_table_max_distance", PROPERTY_HINT_RANGE, "0.0, 1000.0, 0.01, or_greater"),
+			"set_data6_water_table_max_distance",
+			"get_data6_water_table_max_distance"
 	);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius"), "set_radius", "get_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "factor"), "set_factor", "get_factor");
