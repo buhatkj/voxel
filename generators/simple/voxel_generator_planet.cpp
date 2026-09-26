@@ -928,6 +928,7 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			"set_height_noise_amplitude",
 			"get_height_noise_amplitude"
 	);
+	ADD_GROUP("Detail Noise", "detail_noise");
 	ADD_PROPERTY(
 			PropertyInfo(Variant::FLOAT, "detail_noise_min_slope_degrees", PROPERTY_HINT_RANGE, "0.0, 180.0, 0.1"),
 			"set_detail_noise_min_slope_degrees",
@@ -959,22 +960,6 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			"get_detail_noise_max_slope_falloff_degrees"
 	);
 	ADD_PROPERTY(
-			PropertyInfo(Variant::BOOL, "data6_water_table_enabled"),
-			"set_data6_water_table_enabled",
-			"is_data6_water_table_enabled"
-	);
-	ADD_PROPERTY(
-			PropertyInfo(Variant::FLOAT, "data6_water_table_max_distance", PROPERTY_HINT_RANGE, "0.0, 1000.0, 0.01, or_greater"),
-			"set_data6_water_table_max_distance",
-			"get_data6_water_table_max_distance"
-	);
-	ADD_PROPERTY(
-			PropertyInfo(Variant::BOOL, "data7_latitude_enabled"),
-			"set_data7_latitude_enabled",
-			"is_data7_latitude_enabled"
-	);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius"), "set_radius", "get_radius");
-	ADD_PROPERTY(
 			PropertyInfo(
 					Variant::OBJECT,
 					"detail_noise",
@@ -991,6 +976,22 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			"set_detail_noise_amplitude",
 			"get_detail_noise_amplitude"
 	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::BOOL, "data6_water_table_enabled"),
+			"set_data6_water_table_enabled",
+			"is_data6_water_table_enabled"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "data6_water_table_max_distance", PROPERTY_HINT_RANGE, "0.0, 1000.0, 0.01, or_greater"),
+			"set_data6_water_table_max_distance",
+			"get_data6_water_table_max_distance"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::BOOL, "data7_latitude_enabled"),
+			"set_data7_latitude_enabled",
+			"is_data7_latitude_enabled"
+	);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius"), "set_radius", "get_radius");
 
 	ADD_PROPERTY(
 			PropertyInfo(Variant::FLOAT, "rotation_speed"),
