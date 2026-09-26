@@ -4276,9 +4276,9 @@ void VoxelLodTerrain::_bind_methods() {
 	ADD_DEBUG_DRAW_FLAG("debug_draw_loaded_visual_and_collision_blocks", DEBUG_DRAW_LOADED_VISUAL_AND_COLLISION_BLOCKS);
 	ADD_DEBUG_DRAW_FLAG("debug_draw_active_visual_and_collision_blocks", DEBUG_DRAW_ACTIVE_VISUAL_AND_COLLISION_BLOCKS);
 	ADD_DEBUG_DRAW_FLAG("debug_draw_voxel_metadata", DEBUG_DRAW_VOXEL_METADATA);
-	ADD_DEBUG_DRAW_FLAG("debug_draw_data5", DEBUG_DRAW_DATA5);
-	ADD_DEBUG_DRAW_FLAG("debug_draw_data6", DEBUG_DRAW_DATA6);
-	ADD_DEBUG_DRAW_FLAG("debug_draw_data7", DEBUG_DRAW_DATA7);
+	ADD_DEBUG_DRAW_FLAG("debug_draw_planet_detail_noise", DEBUG_DRAW_DATA5);
+	ADD_DEBUG_DRAW_FLAG("debug_draw_planet_moisture", DEBUG_DRAW_DATA6);
+	ADD_DEBUG_DRAW_FLAG("debug_draw_planet_temperature", DEBUG_DRAW_DATA7);
 
 	ADD_PROPERTY(
 			PropertyInfo(
