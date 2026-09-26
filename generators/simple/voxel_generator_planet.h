@@ -100,14 +100,14 @@ public:
 	void set_detail_noise_max_slope_falloff_degrees(float degrees);
 	float get_detail_noise_max_slope_falloff_degrees() const;
 
-	void set_data6_water_table_enabled(bool enabled);
-	bool is_data6_water_table_enabled() const;
+	void set_moisture_enabled(bool enabled);
+	bool is_moisture_enabled() const;
 
-	void set_data6_water_table_max_distance(float distance);
-	float get_data6_water_table_max_distance() const;
+	void set_moisture_max_distance(float distance);
+	float get_moisture_max_distance() const;
 
-	void set_data7_latitude_enabled(bool enabled);
-	bool is_data7_latitude_enabled() const;
+	void set_temperature_blend_by_latitude_altitude_enabled(bool enabled);
+	bool is_temperature_blend_by_latitude_altitude_enabled() const;
 
 	void set_radius(float radius);
 	float get_radius() const;
@@ -136,8 +136,8 @@ public:
 	void set_atmospheric_composition(TypedArray<VoxelPlanetAtmosphericGas> composition);
 	TypedArray<VoxelPlanetAtmosphericGas> get_atmospheric_composition() const;
 
-	void set_water_table_radius(int radius);
-	int get_water_table_radius() const;
+	void set_moisture_water_table_radius(int radius);
+	int get_moisture_water_table_radius() const;
 
 	void set_mineral_composition(TypedArray<VoxelPlanetMineral> composition);
 	TypedArray<VoxelPlanetMineral> get_mineral_composition() const;
@@ -221,12 +221,12 @@ private:
 		float slope_hi_in_cos = -1.f;
 		float slope_hi_out_cos = -1.f;
 
-		// When enabled, CHANNEL_DATA6 is derived from the distance to the water table.
-		bool data6_water_table_enabled = false;
-		float data6_water_table_max_distance = 1.f;
+		// When enabled, moisture proximity is derived from the distance to the water table.
+		bool moisture_enabled = false;
+		float moisture_max_distance = 1.f;
 
-		// When enabled, CHANNEL_DATA7 is a surface temperature derived from latitude and altitude.
-		bool data7_latitude_enabled = false;
+		// When enabled, surface temperature is blended by latitude and altitude.
+		bool temperature_blend_by_latitude_altitude_enabled = false;
 
 		// Detail noise (fractal Perlin) blended into the surface for fine detail.
 		Ref<ZN_FastNoiseLite> detail_noise;
@@ -237,9 +237,9 @@ private:
 		Vector3 rotation_axis = Vector3(0.0f, 1.0f, 0.0f);
 		float atmospheric_density = 0.0f;
 		int atmosphere_thickness = 0;
-		int water_table_radius = 0;
-		float min_surface_temperature = 273.15f;
-		float max_surface_temperature = 273.15f;
+		int moisture_water_table_radius = 0;
+		float temperature_min_surface_temperature = 273.15f;
+		float temperature_max_surface_temperature = 273.15f;
 
 		struct GasItem {
 			String name;
@@ -288,11 +288,11 @@ private:
 			const Parameters &params
 	) const;
 
-	// Value stored in CHANNEL_DATA6: the water table proximity, or 0 when disabled.
-	float _compute_data6(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
+	// Water table proximity used for the moisture channel, or 0 when disabled.
+	float _compute_moisture(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
 
-	// Value stored in CHANNEL_DATA7: the normalized surface temperature, or 0 when disabled.
-	float _compute_data7(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
+	// Normalized surface temperature, or 0 when disabled.
+	float _compute_temperature(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
 
 	// Refreshes the precomputed slope band edges. The parameters lock must be held for writing.
 	static void _update_slope_thresholds(Parameters &params);
