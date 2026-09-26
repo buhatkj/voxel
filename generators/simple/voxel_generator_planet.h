@@ -133,6 +133,9 @@ public:
 	void set_data6_water_table_max_distance(float distance);
 	float get_data6_water_table_max_distance() const;
 
+	void set_data7_latitude_enabled(bool enabled);
+	bool is_data7_latitude_enabled() const;
+
 	void set_radius(float radius);
 	float get_radius() const;
 
@@ -283,6 +286,10 @@ private:
 		bool data6_water_table_enabled = false;
 		float data6_water_table_max_distance = 1.f;
 
+		// When enabled, CHANNEL_DATA7 is a surface temperature derived from latitude and altitude,
+		// instead of `image_data7`.
+		bool data7_latitude_enabled = false;
+
 		// Detail noise (fractal Perlin) blended into the surface for fine detail.
 		Ref<ZN_FastNoiseLite> detail_noise;
 		bool detail_noise_enabled = false;
@@ -346,6 +353,9 @@ private:
 
 	// Value stored in CHANNEL_DATA6: either the water table proximity or a sample of `image_data6`.
 	float _compute_data6(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
+
+	// Value stored in CHANNEL_DATA7: either the surface temperature or a sample of `image_data7`.
+	float _compute_data7(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
 
 	// Refreshes the precomputed slope band edges. The parameters lock must be held for writing.
 	static void _update_slope_thresholds(Parameters &params);

@@ -14,6 +14,9 @@
 
 namespace zylann::voxel {
 
+// Surface temperatures are authored in Kelvin but stored in CHANNEL_DATA7 normalized against this range.
+static constexpr float MAX_TEMPERATURE_KELVIN = 6000.f;
+
 VoxelPlanetAtmosphericGas::VoxelPlanetAtmosphericGas() {}
 
 void VoxelPlanetAtmosphericGas::set_gas_name(const String &p_name) {
@@ -430,6 +433,19 @@ float VoxelGeneratorPlanet::get_data6_water_table_max_distance() const {
 	return _parameters.data6_water_table_max_distance;
 }
 
+void VoxelGeneratorPlanet::set_data7_latitude_enabled(bool enabled) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.data7_latitude_enabled = enabled;
+	}
+	emit_changed();
+}
+
+bool VoxelGeneratorPlanet::is_data7_latitude_enabled() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.data7_latitude_enabled;
+}
+
 void VoxelGeneratorPlanet::set_radius(float radius) {
 	{
 		RWLockWrite wlock(_parameters_lock);
@@ -640,7 +656,7 @@ TypedArray<VoxelPlanetMineral> VoxelGeneratorPlanet::get_mineral_composition() c
 void VoxelGeneratorPlanet::set_min_surface_temperature(float temp) {
 	{
 		RWLockWrite wlock(_parameters_lock);
-		_parameters.min_surface_temperature = temp;
+		_parameters.min_surface_temperature = math::clamp(temp, 0.f, MAX_TEMPERATURE_KELVIN);
 	}
 	emit_changed();
 }
@@ -653,7 +669,7 @@ float VoxelGeneratorPlanet::get_min_surface_temperature() const {
 void VoxelGeneratorPlanet::set_max_surface_temperature(float temp) {
 	{
 		RWLockWrite wlock(_parameters_lock);
-		_parameters.max_surface_temperature = temp;
+		_parameters.max_surface_temperature = math::clamp(temp, 0.f, MAX_TEMPERATURE_KELVIN);
 	}
 	emit_changed();
 }
@@ -807,6 +823,38 @@ float VoxelGeneratorPlanet::_compute_data6(float pos_x, float pos_y, float pos_z
 	);
 }
 
+float VoxelGeneratorPlanet::_compute_data7(float pos_x, float pos_y, float pos_z, const Parameters &params) const {
+	if (params.data7_latitude_enabled) {
+		const float t_min = math::min(params.min_surface_temperature, params.max_surface_temperature);
+		const float t_max = math::max(params.min_surface_temperature, params.max_surface_temperature);
+		const float inv_scale = 1.f / MAX_TEMPERATURE_KELVIN;
+		if (params.radius <= 0.f) {
+			return math::clamp(params.max_surface_temperature, t_min, t_max) * inv_scale;
+		}
+		// The planet is generated centered on the origin, so the local Y axis is the polar axis.
+		const float latitude_t = math::clamp(Math::abs(pos_y) / params.radius, 0.f, 1.f);
+		float altitude_t = 0.f;
+		if (params.atmosphere_thickness > 0) {
+			const float d = Math::Fast_Sqrt(pos_x * pos_x + pos_y * pos_y + pos_z * pos_z);
+			altitude_t = math::clamp((d - params.radius) / float(params.atmosphere_thickness), 0.f, 1.f);
+		}
+		const float t = math::clamp(latitude_t + altitude_t, 0.f, 1.f);
+		const float kelvin = params.max_surface_temperature +
+				(params.min_surface_temperature - params.max_surface_temperature) * t;
+		return math::clamp(kelvin, t_min, t_max) * inv_scale;
+	}
+	if (params.image_data7.is_null()) {
+		return 0.f;
+	}
+	float u = 0.f;
+	float v = 0.f;
+	compute_planet_uv(pos_x, pos_y, pos_z, u, v);
+	// The A channel holds the DATA7 value.
+	return sample_image_channel_linear(
+			**params.image_data7, u * params.norm_x_data7, v * params.norm_y_data7, 3
+	);
+}
+
 float VoxelGeneratorPlanet::_apply_noise(
 		float sdf,
 		float pos_x,
@@ -858,14 +906,16 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 	const int stride = 1 << input.lod;
 	const float stride_f = float(stride);
 
-	const Image *im_d7 = params.image_data7.is_valid() ? &**params.image_data7 : nullptr;
+	const Image *im_d7 = (!params.data7_latitude_enabled && params.image_data7.is_valid())
+			? &**params.image_data7
+			: nullptr;
 	const Image *im_d6 = (!params.data6_water_table_enabled && params.image_data6.is_valid())
 			? &**params.image_data6
 			: nullptr;
 	const bool has_any_data_image =
-			(params.image_data5.is_valid() || params.image_data6.is_valid() || im_d7 != nullptr);
-	const bool has_any_data =
-			has_any_data_image || params.data5_slope_enabled || params.data6_water_table_enabled;
+			(params.image_data5.is_valid() || params.image_data6.is_valid() || params.image_data7.is_valid());
+	const bool has_any_data = has_any_data_image || params.data5_slope_enabled ||
+			params.data6_water_table_enabled || params.data7_latitude_enabled;
 	const bool needs_uv = (im_d6 != nullptr || im_d7 != nullptr);
 	const ZN_FastNoiseLite *height_noise =
 			(params.height_source == SOURCE_NOISE && params.height_noise.is_valid()) ? &**params.height_noise : nullptr;
@@ -917,7 +967,7 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 							: (params.data6_water_table_enabled ? _compute_data6(gx, gy, gz, params) : 0.f);
 					const float meta_a = im_d7 != nullptr
 							? sample_image_channel_linear(*im_d7, u * params.norm_x_data7, v * params.norm_y_data7, 3)
-							: 0.f;
+							: (params.data7_latitude_enabled ? _compute_data7(gx, gy, gz, params) : 0.f);
 
 					out_buffer.set_voxel_f(meta_g, x, y, z, VoxelBuffer::CHANNEL_DATA5);
 					out_buffer.set_voxel_f(meta_b, x, y, z, VoxelBuffer::CHANNEL_DATA6);
@@ -986,19 +1036,7 @@ VoxelSingleValue VoxelGeneratorPlanet::generate_single(Vector3i pos, unsigned in
 	} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
 		v.f = _compute_data6(float(pos.x), float(pos.y), float(pos.z), params);
 	} else if (channel == VoxelBuffer::CHANNEL_DATA7) {
-		if (params.image_data7.is_valid()) {
-			float u = 0.f;
-			float v_coord = 0.f;
-			compute_planet_uv(float(pos.x), float(pos.y), float(pos.z), u, v_coord);
-			v.f = sample_image_channel_linear(
-					**params.image_data7,
-					u * params.norm_x_data7,
-					v_coord * params.norm_y_data7,
-					3
-			);
-		} else {
-			v.f = 0.f;
-		}
+		v.f = _compute_data7(float(pos.x), float(pos.y), float(pos.z), params);
 	} else {
 		v.i = 0;
 	}
@@ -1075,18 +1113,8 @@ void VoxelGeneratorPlanet::generate_series(
 			out_values[i] = _compute_data6(positions_x[i], positions_y[i], positions_z[i], params);
 		}
 	} else if (channel == VoxelBuffer::CHANNEL_DATA7) {
-		if (params.image_data7.is_valid()) {
-			const Image &image = **params.image_data7;
-			for (size_t i = 0; i < count; ++i) {
-				float u = 0.f;
-				float v = 0.f;
-				compute_planet_uv(positions_x[i], positions_y[i], positions_z[i], u, v);
-				out_values[i] = sample_image_channel_linear(image, u * params.norm_x_data7, v * params.norm_y_data7, 3);
-			}
-		} else {
-			for (size_t i = 0; i < count; ++i) {
-				out_values[i] = 0.f;
-			}
+		for (size_t i = 0; i < count; ++i) {
+			out_values[i] = _compute_data7(positions_x[i], positions_y[i], positions_z[i], params);
 		}
 	} else {
 		for (size_t i = 0; i < count; ++i) {
@@ -1154,6 +1182,11 @@ void VoxelGeneratorPlanet::_bind_methods() {
 	ClassDB::bind_method(
 			D_METHOD("get_data6_water_table_max_distance"), &VoxelGeneratorPlanet::get_data6_water_table_max_distance
 	);
+
+	ClassDB::bind_method(
+			D_METHOD("set_data7_latitude_enabled", "enabled"), &VoxelGeneratorPlanet::set_data7_latitude_enabled
+	);
+	ClassDB::bind_method(D_METHOD("is_data7_latitude_enabled"), &VoxelGeneratorPlanet::is_data7_latitude_enabled);
 
 	ClassDB::bind_method(D_METHOD("set_radius", "radius"), &VoxelGeneratorPlanet::set_radius);
 	ClassDB::bind_method(D_METHOD("get_radius"), &VoxelGeneratorPlanet::get_radius);
@@ -1297,6 +1330,11 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			"set_data6_water_table_max_distance",
 			"get_data6_water_table_max_distance"
 	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::BOOL, "data7_latitude_enabled"),
+			"set_data7_latitude_enabled",
+			"is_data7_latitude_enabled"
+	);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius"), "set_radius", "get_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "factor"), "set_factor", "get_factor");
 	ADD_PROPERTY(
@@ -1363,12 +1401,12 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			"get_mineral_composition"
 	);
 	ADD_PROPERTY(
-			PropertyInfo(Variant::FLOAT, "min_surface_temperature"),
+			PropertyInfo(Variant::FLOAT, "min_surface_temperature", PROPERTY_HINT_RANGE, "0.0, 6000.0, 0.01"),
 			"set_min_surface_temperature",
 			"get_min_surface_temperature"
 	);
 	ADD_PROPERTY(
-			PropertyInfo(Variant::FLOAT, "max_surface_temperature"),
+			PropertyInfo(Variant::FLOAT, "max_surface_temperature", PROPERTY_HINT_RANGE, "0.0, 6000.0, 0.01"),
 			"set_max_surface_temperature",
 			"get_max_surface_temperature"
 	);
