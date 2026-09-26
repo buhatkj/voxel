@@ -100,6 +100,7 @@ void VoxelPlanetMineral::_bind_methods() {
 
 VoxelGeneratorPlanet::VoxelGeneratorPlanet() {
 	_height_source = SOURCE_NOISE;
+	_update_slope_thresholds(_parameters);
 	Ref<ZN_FastNoiseLite> noise;
 	noise.instantiate();
 	set_height_noise(noise);
@@ -351,6 +352,7 @@ void VoxelGeneratorPlanet::set_data5_min_slope_degrees(float degrees) {
 	{
 		RWLockWrite wlock(_parameters_lock);
 		_parameters.data5_min_slope_degrees = math::clamp(degrees, 0.f, 180.f);
+		_update_slope_thresholds(_parameters);
 	}
 	emit_changed();
 }
@@ -364,6 +366,7 @@ void VoxelGeneratorPlanet::set_data5_max_slope_degrees(float degrees) {
 	{
 		RWLockWrite wlock(_parameters_lock);
 		_parameters.data5_max_slope_degrees = math::clamp(degrees, 0.f, 180.f);
+		_update_slope_thresholds(_parameters);
 	}
 	emit_changed();
 }
@@ -377,6 +380,7 @@ void VoxelGeneratorPlanet::set_data5_min_slope_falloff_degrees(float degrees) {
 	{
 		RWLockWrite wlock(_parameters_lock);
 		_parameters.data5_min_slope_falloff_degrees = math::clamp(degrees, 0.f, 180.f);
+		_update_slope_thresholds(_parameters);
 	}
 	emit_changed();
 }
@@ -390,6 +394,7 @@ void VoxelGeneratorPlanet::set_data5_max_slope_falloff_degrees(float degrees) {
 	{
 		RWLockWrite wlock(_parameters_lock);
 		_parameters.data5_max_slope_falloff_degrees = math::clamp(degrees, 0.f, 180.f);
+		_update_slope_thresholds(_parameters);
 	}
 	emit_changed();
 }
@@ -632,6 +637,20 @@ float VoxelGeneratorPlanet::get_max_surface_temperature() const {
 	return _parameters.max_surface_temperature;
 }
 
+void VoxelGeneratorPlanet::_update_slope_thresholds(Parameters &params) {
+	const float pi = math::PI<float>;
+	const float min_rad = math::deg_to_rad(params.data5_min_slope_degrees);
+	const float max_rad = math::deg_to_rad(params.data5_max_slope_degrees);
+	params.slope_lo_in_rad = min_rad;
+	params.slope_hi_in_rad = max_rad;
+	params.slope_lo_out_rad = math::max(min_rad - math::deg_to_rad(params.data5_min_slope_falloff_degrees), 0.f);
+	params.slope_hi_out_rad = math::min(max_rad + math::deg_to_rad(params.data5_max_slope_falloff_degrees), pi);
+	params.slope_lo_in_cos = Math::cos(params.slope_lo_in_rad);
+	params.slope_hi_in_cos = Math::cos(params.slope_hi_in_rad);
+	params.slope_lo_out_cos = Math::cos(params.slope_lo_out_rad);
+	params.slope_hi_out_cos = Math::cos(params.slope_hi_out_rad);
+}
+
 float VoxelGeneratorPlanet::_base_sdf(float pos_x, float pos_y, float pos_z, const Parameters &params) const {
 	if (params.height_source == SOURCE_IMAGE) {
 		if (params.image.is_null()) {
@@ -665,47 +684,62 @@ float VoxelGeneratorPlanet::_compute_slope_weight(
 		float pos_x,
 		float pos_y,
 		float pos_z,
+		float epsilon,
 		const Parameters &params
 ) const {
-	// Surface normal from the gradient of the base SDF, sampled one voxel around the position.
-	const float e = 1.f;
+	// Surface normal from the gradient of the base SDF.
+	const float e = epsilon;
 	const float gx = _base_sdf(pos_x + e, pos_y, pos_z, params) - _base_sdf(pos_x - e, pos_y, pos_z, params);
 	const float gy = _base_sdf(pos_x, pos_y + e, pos_z, params) - _base_sdf(pos_x, pos_y - e, pos_z, params);
 	const float gz = _base_sdf(pos_x, pos_y, pos_z + e, params) - _base_sdf(pos_x, pos_y, pos_z - e, params);
 
-	const float g_len = Math::sqrt(gx * gx + gy * gy + gz * gz);
-	const float p_len = Math::sqrt(pos_x * pos_x + pos_y * pos_y + pos_z * pos_z);
+	const float g_len2 = gx * gx + gy * gy + gz * gz;
+	const float p_len2 = pos_x * pos_x + pos_y * pos_y + pos_z * pos_z;
 
 	// Degenerate cases (flat field or planet center): consider the surface horizontal.
-	float angle_rad = 0.f;
-	if (g_len > 0.000001f && p_len > 0.000001f) {
-		const float cosine =
-				math::clamp((gx * pos_x + gy * pos_y + gz * pos_z) / (g_len * p_len), -1.f, 1.f);
-		angle_rad = Math::acos(cosine);
+	float cosine = 1.f;
+	if (g_len2 > 1e-12f && p_len2 > 1e-12f) {
+		const float inv = 1.f / Math::sqrt(g_len2 * p_len2);
+		cosine = math::clamp((gx * pos_x + gy * pos_y + gz * pos_z) * inv, -1.f, 1.f);
 	}
 
-	const float min_rad = math::deg_to_rad(params.data5_min_slope_degrees);
-	const float max_rad = math::deg_to_rad(params.data5_max_slope_degrees);
-	if (angle_rad >= min_rad && angle_rad <= max_rad) {
+	// Cosine decreases as the slope angle increases, so the inner band is bracketed in reverse.
+	if (cosine <= params.slope_lo_in_cos && cosine >= params.slope_hi_in_cos) {
 		return 1.f;
 	}
-	if (angle_rad < min_rad) {
-		const float falloff_rad = math::deg_to_rad(params.data5_min_slope_falloff_degrees);
-		if (falloff_rad <= 0.f) {
+	if (cosine > params.slope_lo_in_cos) {
+		if (cosine >= params.slope_lo_out_cos) {
 			return 0.f;
 		}
-		return math::clamp((angle_rad - (min_rad - falloff_rad)) / falloff_rad, 0.f, 1.f);
+		const float angle = Math::acos(cosine);
+		return math::clamp(
+				(angle - params.slope_lo_out_rad) / (params.slope_lo_in_rad - params.slope_lo_out_rad), 0.f, 1.f
+		);
 	}
-	const float falloff_rad = math::deg_to_rad(params.data5_max_slope_falloff_degrees);
-	if (falloff_rad <= 0.f) {
+	if (cosine <= params.slope_hi_out_cos) {
 		return 0.f;
 	}
-	return math::clamp(((max_rad + falloff_rad) - angle_rad) / falloff_rad, 0.f, 1.f);
+	const float angle = Math::acos(cosine);
+	return math::clamp(
+			(params.slope_hi_out_rad - angle) / (params.slope_hi_out_rad - params.slope_hi_in_rad), 0.f, 1.f
+	);
 }
 
-float VoxelGeneratorPlanet::_compute_data5(float pos_x, float pos_y, float pos_z, const Parameters &params) const {
+float VoxelGeneratorPlanet::_compute_data5(
+		float pos_x,
+		float pos_y,
+		float pos_z,
+		float base_sdf,
+		float stride,
+		const Parameters &params
+) const {
 	if (params.data5_slope_enabled) {
-		return _compute_slope_weight(pos_x, pos_y, pos_z, params);
+		// The slope gradient is expensive, and only voxels near the surface can make use of it.
+		const float band = params.detail_noise_amplitude + 2.f * stride;
+		if (Math::abs(base_sdf) > band) {
+			return 0.f;
+		}
+		return _compute_slope_weight(pos_x, pos_y, pos_z, stride, params);
 	}
 	if (params.image_data5.is_null()) {
 		return 0.f;
@@ -724,6 +758,7 @@ float VoxelGeneratorPlanet::_apply_noise(
 		float pos_x,
 		float pos_y,
 		float pos_z,
+		float data5,
 		const Parameters &params
 ) const {
 	if (!params.detail_noise_enabled || params.detail_noise.is_null()) {
@@ -732,17 +767,12 @@ float VoxelGeneratorPlanet::_apply_noise(
 	if (!params.data5_slope_enabled && params.image_data5.is_null()) {
 		return sdf;
 	}
-	const float amplitude_base = params.detail_noise_amplitude;
-	if (amplitude_base <= 0.f) {
-		return sdf;
-	}
-	const ZN_FastNoiseLite &noise = **params.detail_noise;
 	// The CHANNEL_DATA5 value attenuates the noise amplitude: 0.0 = flat (no noise), 1.0 = full configured amplitude.
-	const float attenuation = math::clamp(_compute_data5(pos_x, pos_y, pos_z, params), 0.f, 1.f);
-	const float amplitude = amplitude_base * attenuation;
+	const float amplitude = params.detail_noise_amplitude * math::clamp(data5, 0.f, 1.f);
 	if (amplitude <= 0.f) {
 		return sdf;
 	}
+	const ZN_FastNoiseLite &noise = **params.detail_noise;
 	// Sample the noise in world space. The noise resource's `period` already defines its frequency.
 	const float n = noise.get_noise_3d(pos_x, pos_y, pos_z);
 	return sdf - amplitude * n;
@@ -772,11 +802,13 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 
 	const Vector3i bs = out_buffer.get_size();
 	const int stride = 1 << input.lod;
+	const float stride_f = float(stride);
 
 	const Image *im_d6 = params.image_data6.is_valid() ? &**params.image_data6 : nullptr;
 	const Image *im_d7 = params.image_data7.is_valid() ? &**params.image_data7 : nullptr;
 	const bool has_any_data_image = (params.image_data5.is_valid() || im_d6 != nullptr || im_d7 != nullptr);
 	const bool has_any_data = has_any_data_image || params.data5_slope_enabled;
+	const bool needs_uv = (im_d6 != nullptr || im_d7 != nullptr);
 	const ZN_FastNoiseLite *height_noise =
 			(params.height_source == SOURCE_NOISE && params.height_noise.is_valid()) ? &**params.height_noise : nullptr;
 	const float height_noise_amp = params.height_noise_amplitude * params.factor;
@@ -787,9 +819,9 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 		for (int x = 0; x < bs.x; ++x, gx += stride) {
 			int gy = input.origin_in_voxels.y;
 			for (int y = 0; y < bs.y; ++y, gy += stride) {
-				float sdf;
+				float base_sdf;
 				if (params.height_source == SOURCE_IMAGE) {
-					sdf = sdf_sphere_heightmap(
+					base_sdf = sdf_sphere_heightmap(
 							gx,
 							gy,
 							gz,
@@ -803,20 +835,24 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 					);
 				} else {
 					const float d = Math::Fast_Sqrt(float(gx * gx + gy * gy + gz * gz)) + 0.0001f;
-					sdf = d - params.radius;
+					base_sdf = d - params.radius;
 					if (height_noise != nullptr && height_noise_amp != 0.f) {
-						sdf -= height_noise_amp * height_noise->get_noise_3d(gx, gy, gz);
+						base_sdf -= height_noise_amp * height_noise->get_noise_3d(gx, gy, gz);
 					}
 				}
-				sdf = _apply_noise(sdf, gx, gy, gz, params);
+
+				const float meta_g = has_any_data ? _compute_data5(gx, gy, gz, base_sdf, stride_f, params) : 0.f;
+
+				const float sdf = _apply_noise(base_sdf, gx, gy, gz, meta_g, params);
 				out_buffer.set_voxel_f(sdf, x, y, z, VoxelBuffer::CHANNEL_SDF);
 
 				if (has_any_data) {
 					float u = 0.f;
 					float v = 0.f;
-					compute_planet_uv(gx, gy, gz, u, v);
+					if (needs_uv) {
+						compute_planet_uv(gx, gy, gz, u, v);
+					}
 
-					const float meta_g = _compute_data5(gx, gy, gz, params);
 					const float meta_b = im_d6 != nullptr
 							? sample_image_channel_linear(*im_d6, u * params.norm_x_data6, v * params.norm_y_data6, 2)
 							: 0.f;
@@ -852,13 +888,13 @@ VoxelSingleValue VoxelGeneratorPlanet::generate_single(Vector3i pos, unsigned in
 	}
 
 	if (channel == VoxelBuffer::CHANNEL_SDF) {
-		float sdf;
+		float base_sdf;
 		if (params.height_source == SOURCE_IMAGE) {
 			if (params.image.is_null()) {
 				return v;
 			}
 			const Image &image = **params.image;
-			sdf = sdf_sphere_heightmap(
+			base_sdf = sdf_sphere_heightmap(
 					float(pos.x),
 					float(pos.y),
 					float(pos.z),
@@ -875,17 +911,19 @@ VoxelSingleValue VoxelGeneratorPlanet::generate_single(Vector3i pos, unsigned in
 			const float fy = float(pos.y);
 			const float fz = float(pos.z);
 			const float d = Math::Fast_Sqrt(fx * fx + fy * fy + fz * fz) + 0.0001f;
-			sdf = d - params.radius;
+			base_sdf = d - params.radius;
 			if (params.height_noise.is_valid()) {
 				const float height_noise_amp = params.height_noise_amplitude * params.factor;
 				if (height_noise_amp != 0.f) {
-					sdf -= height_noise_amp * params.height_noise->get_noise_3d(fx, fy, fz);
+					base_sdf -= height_noise_amp * params.height_noise->get_noise_3d(fx, fy, fz);
 				}
 			}
 		}
-		v.f = _apply_noise(sdf, float(pos.x), float(pos.y), float(pos.z), params);
+		const float data5 = _compute_data5(float(pos.x), float(pos.y), float(pos.z), base_sdf, 1.f, params);
+		v.f = _apply_noise(base_sdf, float(pos.x), float(pos.y), float(pos.z), data5, params);
 	} else if (channel == VoxelBuffer::CHANNEL_DATA5) {
-		v.f = _compute_data5(float(pos.x), float(pos.y), float(pos.z), params);
+		const float base_sdf = _base_sdf(float(pos.x), float(pos.y), float(pos.z), params);
+		v.f = _compute_data5(float(pos.x), float(pos.y), float(pos.z), base_sdf, 1.f, params);
 	} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
 		if (params.image_data6.is_valid()) {
 			float u = 0.f;
@@ -947,7 +985,7 @@ void VoxelGeneratorPlanet::generate_series(
 			}
 			const Image &image = **params.image;
 			for (size_t i = 0; i < count; ++i) {
-				float sdf = sdf_sphere_heightmap(
+				const float base_sdf = sdf_sphere_heightmap(
 						positions_x[i],
 						positions_y[i],
 						positions_z[i],
@@ -959,7 +997,9 @@ void VoxelGeneratorPlanet::generate_series(
 						params.norm_x,
 						params.norm_y
 				);
-				out_values[i] = _apply_noise(sdf, positions_x[i], positions_y[i], positions_z[i], params);
+				const float data5 =
+						_compute_data5(positions_x[i], positions_y[i], positions_z[i], base_sdf, 1.f, params);
+				out_values[i] = _apply_noise(base_sdf, positions_x[i], positions_y[i], positions_z[i], data5, params);
 			}
 		} else {
 			const ZN_FastNoiseLite *height_noise =
@@ -970,16 +1010,18 @@ void VoxelGeneratorPlanet::generate_series(
 				const float py = positions_y[i];
 				const float pz = positions_z[i];
 				const float d = Math::Fast_Sqrt(px * px + py * py + pz * pz) + 0.0001f;
-				float sdf = d - params.radius;
+				float base_sdf = d - params.radius;
 				if (height_noise != nullptr && height_noise_amp != 0.f) {
-					sdf -= height_noise_amp * height_noise->get_noise_3d(px, py, pz);
+					base_sdf -= height_noise_amp * height_noise->get_noise_3d(px, py, pz);
 				}
-				out_values[i] = _apply_noise(sdf, px, py, pz, params);
+				const float data5 = _compute_data5(px, py, pz, base_sdf, 1.f, params);
+				out_values[i] = _apply_noise(base_sdf, px, py, pz, data5, params);
 			}
 		}
 	} else if (channel == VoxelBuffer::CHANNEL_DATA5) {
 		for (size_t i = 0; i < count; ++i) {
-			out_values[i] = _compute_data5(positions_x[i], positions_y[i], positions_z[i], params);
+			const float base_sdf = _base_sdf(positions_x[i], positions_y[i], positions_z[i], params);
+			out_values[i] = _compute_data5(positions_x[i], positions_y[i], positions_z[i], base_sdf, 1.f, params);
 		}
 	} else if (channel == VoxelBuffer::CHANNEL_DATA6) {
 		if (params.image_data6.is_valid()) {

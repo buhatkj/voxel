@@ -9,6 +9,7 @@
 #include "../../util/godot/classes/resource.h"
 #include "../../util/godot/core/typed_array.h"
 #include "../../util/godot/macros.h"
+#include "../../util/math/constants.h"
 #include "../../util/math/vector3f.h"
 #include "../../util/math/vector3i.h"
 #include "../../util/thread/rw_lock.h"
@@ -261,6 +262,17 @@ private:
 		float data5_min_slope_falloff_degrees = 0.f;
 		float data5_max_slope_falloff_degrees = 0.f;
 
+		// Precomputed slope band edges. Cosines decrease as the angle increases, which lets us classify a
+		// slope without calling `acos` outside of the falloff bands.
+		float slope_lo_out_rad = 0.f;
+		float slope_lo_in_rad = 0.f;
+		float slope_hi_in_rad = math::PI<float>;
+		float slope_hi_out_rad = math::PI<float>;
+		float slope_lo_out_cos = 1.f;
+		float slope_lo_in_cos = 1.f;
+		float slope_hi_in_cos = -1.f;
+		float slope_hi_out_cos = -1.f;
+
 		// Detail noise (fractal Perlin) blended into the surface for fine detail.
 		Ref<ZN_FastNoiseLite> detail_noise;
 		bool detail_noise_enabled = false;
@@ -301,6 +313,7 @@ private:
 			float pos_x,
 			float pos_y,
 			float pos_z,
+			float data5,
 			const Parameters &params
 	) const;
 
@@ -308,10 +321,21 @@ private:
 	float _base_sdf(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
 
 	// Angle between the surface normal and the radial "up" direction, mapped to 0..1 by the slope range.
-	float _compute_slope_weight(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
+	// `epsilon` is the distance used to sample the SDF gradient, it should match the voxel stride.
+	float _compute_slope_weight(float pos_x, float pos_y, float pos_z, float epsilon, const Parameters &params) const;
 
 	// Value stored in CHANNEL_DATA5: either the slope weight or a sample of `image_data5`.
-	float _compute_data5(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
+	float _compute_data5(
+			float pos_x,
+			float pos_y,
+			float pos_z,
+			float base_sdf,
+			float stride,
+			const Parameters &params
+	) const;
+
+	// Refreshes the precomputed slope band edges. The parameters lock must be held for writing.
+	static void _update_slope_thresholds(Parameters &params);
 };
 
 } // namespace zylann::voxel
