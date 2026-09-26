@@ -234,8 +234,11 @@ public:
 		DEBUG_DRAW_LOADED_VISUAL_AND_COLLISION_BLOCKS = 9,
 		DEBUG_DRAW_ACTIVE_VISUAL_AND_COLLISION_BLOCKS = 10,
 		DEBUG_DRAW_VOXEL_METADATA = 11,
+		DEBUG_DRAW_DATA5 = 12,
+		DEBUG_DRAW_DATA6 = 13,
+		DEBUG_DRAW_DATA7 = 14,
 
-		DEBUG_DRAW_FLAGS_COUNT = 12
+		DEBUG_DRAW_FLAGS_COUNT = 15
 	};
 
 	void debug_set_draw_enabled(bool enabled);
@@ -246,6 +249,12 @@ public:
 
 	void debug_set_draw_shadow_occluders(bool enable);
 	bool debug_get_draw_shadow_occluders() const;
+
+	void debug_set_data_channel_view_radius(int radius);
+	int debug_get_data_channel_view_radius() const;
+
+	void debug_set_data_channel_max_markers(int count);
+	int debug_get_data_channel_max_markers() const;
 
 #ifdef TOOLS_ENABLED
 	void debug_set_draw_flags(uint32_t mask);
@@ -346,6 +355,13 @@ private:
 
 #ifdef TOOLS_ENABLED
 	void update_gizmos();
+	// Draws a marker on every near-surface voxel whose value in `channel` is non-zero, tinted by `base_color`.
+	void draw_data_channel_gizmos(
+			zylann::godot::DebugRenderer &dr,
+			const Transform3D &parent_transform,
+			unsigned int channel,
+			Color base_color
+	);
 #endif
 
 	// Bindings
@@ -450,6 +466,8 @@ private:
 	uint8_t _edited_blocks_gizmos_lod_index = 0;
 	bool _debug_draw_shadow_occluders = false;
 	uint16_t _debug_draw_flags = 0;
+	int _debug_data_channel_view_radius = 32;
+	int _debug_data_channel_max_markers = 20000;
 
 	zylann::godot::DebugRenderer _debug_renderer;
 

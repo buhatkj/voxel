@@ -26,6 +26,8 @@
 #include "../../util/godot/core/string.h"
 #include "../../util/math/color.h"
 #include "../../util/math/conv.h"
+#include "../../util/math/vector3.h"
+#include "../../util/math/vector3i.h"
 #include "../../util/profiling.h"
 #include "../../util/profiling_clock.h"
 #include "../../util/string/format.h"
@@ -35,6 +37,8 @@
 #include "../free_mesh_task.h"
 #include "../voxel_save_completion_tracker.h"
 #include "voxel_lod_terrain_update_task.h"
+
+#include <limits>
 
 #ifdef VOXEL_ENABLE_SMOOTH_MESHING
 #include "../../engine/detail_rendering/detail_rendering.h"
@@ -3308,6 +3312,34 @@ void VoxelLodTerrain::debug_set_draw_flags(uint32_t mask) {
 }
 #endif
 
+void VoxelLodTerrain::debug_set_data_channel_view_radius(int radius) {
+#ifdef TOOLS_ENABLED
+	_debug_data_channel_view_radius = math::max(radius, 0);
+#endif
+}
+
+int VoxelLodTerrain::debug_get_data_channel_view_radius() const {
+#ifdef TOOLS_ENABLED
+	return _debug_data_channel_view_radius;
+#else
+	return 0;
+#endif
+}
+
+void VoxelLodTerrain::debug_set_data_channel_max_markers(int count) {
+#ifdef TOOLS_ENABLED
+	_debug_data_channel_max_markers = math::max(count, 0);
+#endif
+}
+
+int VoxelLodTerrain::debug_get_data_channel_max_markers() const {
+#ifdef TOOLS_ENABLED
+	return _debug_data_channel_max_markers;
+#else
+	return 0;
+#endif
+}
+
 void VoxelLodTerrain::debug_set_draw_shadow_occluders(bool enable) {
 #ifdef TOOLS_ENABLED
 	if (enable == _debug_draw_shadow_occluders) {
@@ -3551,6 +3583,16 @@ void VoxelLodTerrain::update_gizmos() {
 		}
 	}
 
+	if (debug_get_draw_flag(DEBUG_DRAW_DATA5)) {
+		draw_data_channel_gizmos(dr, parent_transform, VoxelBuffer::CHANNEL_DATA5, Color(0.55f, 0.32f, 0.12f));
+	}
+	if (debug_get_draw_flag(DEBUG_DRAW_DATA6)) {
+		draw_data_channel_gizmos(dr, parent_transform, VoxelBuffer::CHANNEL_DATA6, Color(0.15f, 0.4f, 1.f));
+	}
+	if (debug_get_draw_flag(DEBUG_DRAW_DATA7)) {
+		draw_data_channel_gizmos(dr, parent_transform, VoxelBuffer::CHANNEL_DATA7, Color(1.f, 0.15f, 0.1f));
+	}
+
 	// Debug updates
 	for (unsigned int i = 0; i < _debug_mesh_update_items.size();) {
 		DebugMeshUpdateItem &item = _debug_mesh_update_items[i];
@@ -3788,6 +3830,114 @@ bool VoxelLodTerrain::_b_is_area_meshed(AABB aabb, int lod_index) const {
 	return is_area_meshed(Box3i(aabb.position, aabb.size), lod_index);
 }
 
+#ifdef TOOLS_ENABLED
+
+void VoxelLodTerrain::draw_data_channel_gizmos(
+		zylann::godot::DebugRenderer &dr,
+		const Transform3D &parent_transform,
+		unsigned int channel,
+		Color base_color
+) {
+	ZN_PROFILE_SCOPE();
+
+	using namespace zylann::godot;
+
+	// These channels are dense, so we only show voxels close to the viewer, and only at LOD 0.
+	const int view_radius = _debug_data_channel_view_radius;
+	const size_t max_markers = size_t(math::max(_debug_data_channel_max_markers, 0));
+	if (view_radius <= 0 || max_markers == 0) {
+		return;
+	}
+	// Only voxels straddling the isosurface are shown, otherwise the markers would hide each other.
+	constexpr float SURFACE_BAND = 1.f;
+	constexpr float MARKER_SIZE = 0.35f;
+
+	struct Marker {
+		Vector3i position;
+		float value;
+	};
+
+	StdVector<Marker> markers;
+	float min_value = std::numeric_limits<float>::max();
+	float max_value = std::numeric_limits<float>::lowest();
+
+	const int data_block_size = get_data_block_size();
+	// Follows the camera (the editor camera when in the editor) rather than VoxelViewer, which is usually
+	// not enabled in the editor. Camera info is in world space.
+	const Vector3 viewer_pos = get_global_transform().affine_inverse().xform(get_local_camera_info().position);
+	const float view_radius_f = float(view_radius);
+	const float view_radius_sq = view_radius_f * view_radius_f;
+
+	const Vector3i view_min = to_vec3i(math::floor(viewer_pos - Vector3(1, 1, 1) * view_radius_f));
+	const Vector3i view_max = to_vec3i(math::ceil(viewer_pos + Vector3(1, 1, 1) * view_radius_f));
+
+	_data->for_each_block_at_lod_r(
+			[&markers, &min_value, &max_value, data_block_size, viewer_pos, view_radius_sq, view_min, view_max,
+			 max_markers, channel](const Vector3i &bpos, const VoxelDataBlock &block) {
+				if (markers.size() >= max_markers || !block.has_voxels()) {
+					return;
+				}
+				const Vector3i block_origin = bpos * data_block_size;
+				const VoxelBuffer &vb = block.get_voxels_const();
+				const Vector3i size = vb.get_size();
+
+				// Restrict iteration to the part of the block overlapping the view box.
+				const Vector3i rmin = math::max(view_min - block_origin, Vector3i());
+				const Vector3i rmax = math::min(view_max - block_origin, size);
+				if (rmin.x >= rmax.x || rmin.y >= rmax.y || rmin.z >= rmax.z) {
+					return;
+				}
+
+				for (int z = rmin.z; z < rmax.z; ++z) {
+					for (int x = rmin.x; x < rmax.x; ++x) {
+						for (int y = rmin.y; y < rmax.y; ++y) {
+							const Vector3i voxel_pos = block_origin + Vector3i(x, y, z);
+							if (to_vec3(voxel_pos).distance_squared_to(viewer_pos) > view_radius_sq) {
+								continue;
+							}
+							if (Math::abs(float(vb.get_voxel_f(x, y, z, VoxelBuffer::CHANNEL_SDF))) > SURFACE_BAND) {
+								continue;
+							}
+							const float value = float(vb.get_voxel_f(x, y, z, channel));
+							if (value == 0.f) {
+								continue;
+							}
+							markers.push_back(Marker{ voxel_pos, value });
+							min_value = math::min(min_value, value);
+							max_value = math::max(max_value, value);
+							if (markers.size() >= max_markers) {
+								return;
+							}
+						}
+					}
+				}
+			},
+			0
+	);
+
+	if (markers.size() == 0) {
+		return;
+	}
+
+	// Auto-ranging, because channels can hold values in very different scales (a 0..1 mask, a normalized
+	// temperature...) and we have no way to know which one is in use.
+	const float value_range = max_value - min_value;
+	const float inv_range = value_range > 0.0001f ? 1.f / value_range : 0.f;
+
+	const Basis marker_basis = Basis().scaled(Vector3(1, 1, 1) * MARKER_SIZE);
+	const Vector3 marker_offset = Vector3(1, 1, 1) * (0.5f - 0.5f * MARKER_SIZE);
+
+	for (const Marker &marker : markers) {
+		const float t = inv_range != 0.f ? (marker.value - min_value) * inv_range : 1.f;
+		// Keep a floor on brightness so the lowest values remain visible.
+		const Color color = base_color * (0.25f + 0.75f * t);
+		const Transform3D local_transform(marker_basis, to_vec3(marker.position) + marker_offset);
+		dr.draw_box(parent_transform * local_transform, Color8(color));
+	}
+}
+
+#endif // TOOLS_ENABLED
+
 void VoxelLodTerrain::_bind_methods() {
 	using Self = VoxelLodTerrain;
 
@@ -3944,6 +4094,15 @@ void VoxelLodTerrain::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("debug_get_draw_flag", "flag_index"), &Self::debug_get_draw_flag);
 
 	ClassDB::bind_method(
+			D_METHOD("debug_set_data_channel_view_radius", "radius"), &Self::debug_set_data_channel_view_radius
+	);
+	ClassDB::bind_method(D_METHOD("debug_get_data_channel_view_radius"), &Self::debug_get_data_channel_view_radius);
+	ClassDB::bind_method(
+			D_METHOD("debug_set_data_channel_max_markers", "count"), &Self::debug_set_data_channel_max_markers
+	);
+	ClassDB::bind_method(D_METHOD("debug_get_data_channel_max_markers"), &Self::debug_get_data_channel_max_markers);
+
+	ClassDB::bind_method(
 			D_METHOD("debug_set_draw_shadow_occluders", "enabled"), &Self::debug_set_draw_shadow_occluders
 	);
 	ClassDB::bind_method(D_METHOD("debug_get_draw_shadow_occluders"), &Self::debug_get_draw_shadow_occluders);
@@ -3965,6 +4124,9 @@ void VoxelLodTerrain::_bind_methods() {
 	BIND_ENUM_CONSTANT(DEBUG_DRAW_VIEWER_CLIPBOXES);
 	BIND_ENUM_CONSTANT(DEBUG_DRAW_LOADED_VISUAL_AND_COLLISION_BLOCKS);
 	BIND_ENUM_CONSTANT(DEBUG_DRAW_ACTIVE_VISUAL_AND_COLLISION_BLOCKS);
+	BIND_ENUM_CONSTANT(DEBUG_DRAW_DATA5);
+	BIND_ENUM_CONSTANT(DEBUG_DRAW_DATA6);
+	BIND_ENUM_CONSTANT(DEBUG_DRAW_DATA7);
 	BIND_ENUM_CONSTANT(DEBUG_DRAW_FLAGS_COUNT);
 
 	BIND_ENUM_CONSTANT(STREAMING_SYSTEM_LEGACY_OCTREE);
@@ -4114,6 +4276,32 @@ void VoxelLodTerrain::_bind_methods() {
 	ADD_DEBUG_DRAW_FLAG("debug_draw_loaded_visual_and_collision_blocks", DEBUG_DRAW_LOADED_VISUAL_AND_COLLISION_BLOCKS);
 	ADD_DEBUG_DRAW_FLAG("debug_draw_active_visual_and_collision_blocks", DEBUG_DRAW_ACTIVE_VISUAL_AND_COLLISION_BLOCKS);
 	ADD_DEBUG_DRAW_FLAG("debug_draw_voxel_metadata", DEBUG_DRAW_VOXEL_METADATA);
+	ADD_DEBUG_DRAW_FLAG("debug_draw_data5", DEBUG_DRAW_DATA5);
+	ADD_DEBUG_DRAW_FLAG("debug_draw_data6", DEBUG_DRAW_DATA6);
+	ADD_DEBUG_DRAW_FLAG("debug_draw_data7", DEBUG_DRAW_DATA7);
+
+	ADD_PROPERTY(
+			PropertyInfo(
+					Variant::INT,
+					"debug_draw_data_channel_view_radius",
+					PROPERTY_HINT_RANGE,
+					"0, 256, 1, or_greater",
+					PROPERTY_USAGE_EDITOR
+			),
+			"debug_set_data_channel_view_radius",
+			"debug_get_data_channel_view_radius"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(
+					Variant::INT,
+					"debug_draw_data_channel_max_markers",
+					PROPERTY_HINT_RANGE,
+					"0, 200000, 1000, or_greater",
+					PROPERTY_USAGE_EDITOR
+			),
+			"debug_set_data_channel_max_markers",
+			"debug_get_data_channel_max_markers"
+	);
 
 	ADD_PROPERTY(
 			PropertyInfo(Variant::BOOL, "debug_draw_shadow_occluders", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR),
