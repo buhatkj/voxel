@@ -4283,7 +4283,7 @@ void VoxelLodTerrain::_bind_methods() {
 	ADD_PROPERTY(
 			PropertyInfo(
 					Variant::INT,
-					"debug_draw_data_channel_view_radius",
+					"debug_draw_planet_view_radius",
 					PROPERTY_HINT_RANGE,
 					"0, 256, 1, or_greater",
 					PROPERTY_USAGE_EDITOR
@@ -4294,7 +4294,7 @@ void VoxelLodTerrain::_bind_methods() {
 	ADD_PROPERTY(
 			PropertyInfo(
 					Variant::INT,
-					"debug_draw_data_channel_max_markers",
+					"debug_draw_planet_max_markers",
 					PROPERTY_HINT_RANGE,
 					"0, 200000, 1000, or_greater",
 					PROPERTY_USAGE_EDITOR
