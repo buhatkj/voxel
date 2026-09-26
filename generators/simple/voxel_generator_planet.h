@@ -88,17 +88,17 @@ public:
 	void set_height_noise_amplitude(float amplitude);
 	float get_height_noise_amplitude() const;
 
-	void set_data5_min_slope_degrees(float degrees);
-	float get_data5_min_slope_degrees() const;
+	void set_detail_noise_min_slope_degrees(float degrees);
+	float get_detail_noise_min_slope_degrees() const;
 
-	void set_data5_max_slope_degrees(float degrees);
-	float get_data5_max_slope_degrees() const;
+	void set_detail_noise_max_slope_degrees(float degrees);
+	float get_detail_noise_max_slope_degrees() const;
 
-	void set_data5_min_slope_falloff_degrees(float degrees);
-	float get_data5_min_slope_falloff_degrees() const;
+	void set_detail_noise_min_slope_falloff_degrees(float degrees);
+	float get_detail_noise_min_slope_falloff_degrees() const;
 
-	void set_data5_max_slope_falloff_degrees(float degrees);
-	float get_data5_max_slope_falloff_degrees() const;
+	void set_detail_noise_max_slope_falloff_degrees(float degrees);
+	float get_detail_noise_max_slope_falloff_degrees() const;
 
 	void set_data6_water_table_enabled(bool enabled);
 	bool is_data6_water_table_enabled() const;
@@ -202,13 +202,13 @@ private:
 		Ref<ZN_FastNoiseLite> height_noise;
 		float height_noise_amplitude = 1.f;
 
-		// Detail noise also enables the slope mask in CHANNEL_DATA5, which attenuates the noise.
+		// Detail noise is attenuated by a slope mask stored in CHANNEL_DATA5.
 		bool detail_noise_enabled = false;
-		float data5_min_slope_degrees = 0.f;
-		float data5_max_slope_degrees = 180.f;
+		float detail_noise_min_slope_degrees = 0.f;
+		float detail_noise_max_slope_degrees = 180.f;
 		// Widths of the linear blend-out bands, located outside the [min, max] range.
-		float data5_min_slope_falloff_degrees = 0.f;
-		float data5_max_slope_falloff_degrees = 0.f;
+		float detail_noise_min_slope_falloff_degrees = 0.f;
+		float detail_noise_max_slope_falloff_degrees = 0.f;
 
 		// Precomputed slope band edges. Cosines decrease as the angle increases, which lets us classify a
 		// slope without calling `acos` outside of the falloff bands.
@@ -260,14 +260,14 @@ private:
 	StdVector<Ref<VoxelPlanetAtmosphericGas>> _atmospheric_composition;
 	StdVector<Ref<VoxelPlanetMineral>> _mineral_composition;
 
-	// Blends the detail noise into the SDF value, attenuated by the CHANNEL_DATA5 value.
+	// Blends the detail noise into the SDF value, attenuated by the slope mask.
 	// Returns the SDF unchanged when the noise is disabled or has no amplitude.
 	float _apply_noise(
 			float sdf,
 			float pos_x,
 			float pos_y,
 			float pos_z,
-			float data5,
+			float slope_weight,
 			const Parameters &params
 	) const;
 
@@ -278,8 +278,8 @@ private:
 	// `epsilon` is the distance used to sample the SDF gradient, it should match the voxel stride.
 	float _compute_slope_weight(float pos_x, float pos_y, float pos_z, float epsilon, const Parameters &params) const;
 
-	// Value stored in CHANNEL_DATA5: the slope weight, or 0 when disabled.
-	float _compute_data5(
+	// Slope weight used to attenuate detail noise, or 0 when disabled.
+	float _compute_detail_noise_slope_mask(
 			float pos_x,
 			float pos_y,
 			float pos_z,
