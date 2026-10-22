@@ -83,8 +83,12 @@ void GenerateBlockTask::run_gpu_task(zylann::ThreadedTaskContext &ctx) {
 	// TODO Broad-phase to avoid the GPU part entirely?
 	// Implement and call `VoxelGenerator::generate_broad_block()`
 
-	std::shared_ptr<ComputeShader> generator_shader = generator->get_block_rendering_shader();
-	ERR_FAIL_COND(generator_shader == nullptr);
+	const VoxelGenerator::BlockRenderingShader shader_data = generator->get_block_rendering_shader_data();
+	if (!shader_data.is_valid()) {
+		// The main thread may be recompiling the graph after an editor change.
+		ctx.status = ThreadedTaskContext::STATUS_POSTPONED;
+		return;
+	}
 
 	const Vector3i origin_in_voxels = (_position << _lod_index) * _block_size;
 
@@ -99,9 +103,9 @@ void GenerateBlockTask::run_gpu_task(zylann::ThreadedTaskContext &ctx) {
 
 	GenerateBlockGPUTask *gpu_task = ZN_NEW(GenerateBlockGPUTask);
 	gpu_task->boxes_to_generate.push_back(Box3i(Vector3i(), resolution));
-	gpu_task->generator_shader = generator_shader;
-	gpu_task->generator_shader_params = generator->get_block_rendering_shader_parameters();
-	gpu_task->generator_shader_outputs = generator->get_block_rendering_shader_outputs();
+	gpu_task->generator_shader = shader_data.shader;
+	gpu_task->generator_shader_params = shader_data.parameters;
+	gpu_task->generator_shader_outputs = shader_data.outputs;
 	gpu_task->lod_index = _lod_index;
 	gpu_task->origin_in_voxels = origin_in_voxels;
 	gpu_task->consumer_task = this;
@@ -125,6 +129,11 @@ void GenerateBlockTask::run_gpu_task(zylann::ThreadedTaskContext &ctx) {
 void GenerateBlockTask::set_gpu_results(StdVector<GenerateBlockGPUTaskResult> &&results) {
 	_gpu_generation_results = std::move(results);
 	_stage = 1;
+}
+
+void GenerateBlockTask::set_gpu_failed() {
+	_use_gpu = false;
+	_stage = 0;
 }
 
 void GenerateBlockTask::run_gpu_conversion() {

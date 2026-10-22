@@ -133,7 +133,7 @@ public:
 	};
 
 	struct ShaderOutput {
-		enum Type { TYPE_SDF, TYPE_SINGLE_TEXTURE, TYPE_TYPE };
+		enum Type { TYPE_SDF, TYPE_SINGLE_TEXTURE, TYPE_TYPE, TYPE_DATA5, TYPE_DATA6, TYPE_DATA7 };
 		Type type;
 	};
 
@@ -154,7 +154,18 @@ public:
 		StdVector<ShaderOutput> outputs;
 	};
 
+	struct BlockRenderingShader {
+		std::shared_ptr<ComputeShader> shader;
+		std::shared_ptr<ComputeShaderParameters> parameters;
+		std::shared_ptr<ShaderOutputs> outputs;
+
+		bool is_valid() const {
+			return shader != nullptr && parameters != nullptr && outputs != nullptr;
+		}
+	};
+
 	virtual bool get_shader_source(ShaderSourceData &out_data) const;
+	BlockRenderingShader get_block_rendering_shader_data();
 	std::shared_ptr<ComputeShader> get_detail_rendering_shader();
 	std::shared_ptr<ComputeShaderParameters> get_detail_rendering_shader_parameters();
 	std::shared_ptr<ComputeShader> get_block_rendering_shader();

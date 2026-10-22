@@ -31,6 +31,7 @@ GenerateBlockGPUTask::~GenerateBlockGPUTask() {
 }
 
 unsigned int GenerateBlockGPUTask::get_required_shared_output_buffer_size() const {
+	ZN_ASSERT_RETURN_V(generator_shader_outputs != nullptr, 0);
 	unsigned int volume = 0;
 	for (const Box3i &box : boxes_to_generate) {
 		volume += Vector3iUtil::get_volume_u64(box.size);
@@ -43,8 +44,9 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 	ZN_PROFILE_SCOPE();
 	ZN_DSTACK();
 
+	_prepared = false;
 	ZN_ASSERT_RETURN(generator_shader != nullptr);
-	ZN_ASSERT_RETURN(generator_shader->get_rid().is_valid());
+	ZN_ASSERT_RETURN_MSG(generator_shader->get_rid().is_valid(), "Voxel generator compute shader failed to compile.");
 
 	ZN_ASSERT_RETURN(generator_shader_params != nullptr);
 	ZN_ASSERT_RETURN(generator_shader_outputs != nullptr);
@@ -56,6 +58,12 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 
 	RenderingDevice &rd = ctx.rendering_device;
 	GPUStorageBufferPool &storage_buffer_pool = ctx.storage_buffer_pool;
+	ERR_FAIL_COND(!ctx.shared_output_buffer_rid.is_valid());
+	ERR_FAIL_COND(ctx.shared_output_buffer_size != get_required_shared_output_buffer_size());
+	for (const ComputeShaderParameter &parameter : generator_shader_params->params) {
+		ERR_FAIL_COND(parameter.resource == nullptr);
+		ERR_FAIL_COND_MSG(!parameter.resource->get_rid().is_valid(), "Voxel generator shader resource failed to load.");
+	}
 
 	// Modifiers only support SDF for now.
 	int sd_output_index = -1;
@@ -107,6 +115,20 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 		bd.params_uniform->set_uniform_type(RenderingDevice::UNIFORM_TYPE_STORAGE_BUFFER);
 		bd.params_uniform->add_id(bd.params_sb.rid);
 
+#ifdef VOXEL_ENABLE_MODIFIERS
+		if (sd_output_index != -1 && modifiers.size() > 0) {
+			// Modifiers must address the SDF plane, which is not necessarily the first generator output.
+			params.output_buffer_start += buffer_volume * sd_output_index;
+			zylann::godot::copy_bytes_to(params_pba, params);
+			bd.modifier_params_sb = storage_buffer_pool.allocate(params_pba);
+			ERR_FAIL_COND(bd.modifier_params_sb.is_null());
+			bd.modifier_params_uniform.instantiate();
+			bd.modifier_params_uniform->set_uniform_type(RenderingDevice::UNIFORM_TYPE_STORAGE_BUFFER);
+			bd.modifier_params_uniform->set_binding(0);
+			bd.modifier_params_uniform->add_id(bd.modifier_params_sb.rid);
+		}
+#endif
+
 		// Output
 
 		bd.output_uniform.instantiate();
@@ -123,6 +145,13 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 
 #ifdef VOXEL_ENABLE_MODIFIERS
 	for (const VoxelModifier::ShaderData &modifier : modifiers) {
+		if (modifier.params != nullptr) {
+			for (const ComputeShaderParameter &parameter : modifier.params->params) {
+				ERR_FAIL_COND(parameter.resource == nullptr);
+				ERR_FAIL_COND_MSG(!parameter.resource->get_rid().is_valid(),
+								  "Voxel modifier shader resource failed to load.");
+			}
+		}
 		const RID modifier_shader_rid = VoxelModifier::get_block_shader(ctx.base_resources, modifier.modifier_type);
 		ERR_FAIL_COND(!modifier_shader_rid.is_valid());
 		const RID rid = rd.compute_pipeline_create(modifier_shader_rid);
@@ -134,6 +163,7 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 	// Make compute list
 
 	const int compute_list_id = rd.compute_list_begin();
+	bool dispatch_failed = false;
 
 	// Generate
 
@@ -164,6 +194,10 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 		// Mutex (instead of BinaryMutex)
 		const RID generator_uniform_set =
 				zylann::godot::uniform_set_create(rd, generator_uniforms, generator_shader_rid, 0);
+		if (!generator_uniform_set.is_valid()) {
+			dispatch_failed = true;
+			continue;
+		}
 		_uniform_sets_to_free.push_back(generator_uniform_set);
 
 		{
@@ -207,12 +241,11 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 						VoxelModifier::get_block_shader(ctx.base_resources, modifier_data.modifier_type);
 				ZN_ASSERT_CONTINUE(modifier_shader_rid.is_valid());
 
-				bd.params_uniform->set_binding(0);
 				sd_buffer0_uniform->set_binding(1);
 
 				Array modifier_uniforms;
 				modifier_uniforms.resize(2);
-				modifier_uniforms[0] = bd.params_uniform;
+				modifier_uniforms[0] = bd.modifier_params_uniform;
 				modifier_uniforms[1] = sd_buffer0_uniform;
 
 				// Extra params
@@ -224,6 +257,10 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 
 				const RID modifier_uniform_set =
 						zylann::godot::uniform_set_create(rd, modifier_uniforms, modifier_shader_rid, 0);
+				if (!modifier_uniform_set.is_valid()) {
+					dispatch_failed = true;
+					continue;
+				}
 				_uniform_sets_to_free.push_back(modifier_uniform_set);
 
 				const RID pipeline_rid = _modifier_pipelines[modifier_index];
@@ -239,6 +276,7 @@ void GenerateBlockGPUTask::prepare(GPUTaskContext &ctx) {
 #endif
 
 	rd.compute_list_end();
+	_prepared = !dispatch_failed;
 }
 
 namespace {
@@ -255,10 +293,13 @@ inline Span<T> get_temporary_conversion_memory_tls(unsigned int count) {
 	return to_span(mem).reinterpret_cast_to<T>();
 }
 
-void convert_gpu_output_sdf(VoxelBuffer &dst, Span<const float> src_data_f, const Box3i &box) {
+void convert_gpu_output_float(VoxelBuffer &dst,
+							  Span<const float> src_data_f,
+							  const Box3i &box,
+							  VoxelBuffer::ChannelId channel) {
 	ZN_PROFILE_SCOPE();
 
-	const VoxelBuffer::Depth depth = dst.get_channel_depth(VoxelBuffer::CHANNEL_SDF);
+	const VoxelBuffer::Depth depth = dst.get_channel_depth(channel);
 	const float sd_scale = VoxelBuffer::get_sdf_quantization_scale(depth);
 
 	switch (depth) {
@@ -267,9 +308,7 @@ void convert_gpu_output_sdf(VoxelBuffer &dst, Span<const float> src_data_f, cons
 			for (unsigned int i = 0; i < src_data_f.size(); ++i) {
 				sd_data[i] = snorm_to_s8(sd_scale * src_data_f[i]);
 			}
-			dst.copy_channel_from(
-					sd_data.to_const(), box.size, Vector3i(), box.size, box.position, VoxelBuffer::CHANNEL_SDF
-			);
+			dst.copy_channel_from(sd_data.to_const(), box.size, Vector3i(), box.size, box.position, channel);
 		} break;
 
 		case VoxelBuffer::DEPTH_16_BIT: {
@@ -278,19 +317,19 @@ void convert_gpu_output_sdf(VoxelBuffer &dst, Span<const float> src_data_f, cons
 				sd_data[i] = snorm_to_s16(sd_scale * src_data_f[i]);
 			}
 
-			dst.copy_channel_from(
-					sd_data.to_const(), box.size, Vector3i(), box.size, box.position, VoxelBuffer::CHANNEL_SDF
-			);
+			dst.copy_channel_from(sd_data.to_const(), box.size, Vector3i(), box.size, box.position, channel);
 		} break;
 
 		case VoxelBuffer::DEPTH_32_BIT: {
-			dst.copy_channel_from(
-					src_data_f.to_const(), box.size, Vector3i(), box.size, box.position, VoxelBuffer::CHANNEL_SDF
-			);
+			dst.copy_channel_from(src_data_f.to_const(), box.size, Vector3i(), box.size, box.position, channel);
 		} break;
 
 		case VoxelBuffer::DEPTH_64_BIT: {
-			ZN_PRINT_ERROR("64-bit SDF is not supported");
+			Span<double> data = get_temporary_conversion_memory_tls<double>(src_data_f.size());
+			for (unsigned int i = 0; i < src_data_f.size(); ++i) {
+				data[i] = src_data_f[i];
+			}
+			dst.copy_channel_from(data.to_const(), box.size, Vector3i(), box.size, box.position, channel);
 		} break;
 
 		default:
@@ -401,7 +440,19 @@ void GenerateBlockGPUTaskResult::convert_to_voxel_buffer(VoxelBuffer &dst) {
 
 	switch (_type) {
 		case VoxelGenerator::ShaderOutput::TYPE_SDF:
-			convert_gpu_output_sdf(dst, src_data_f, _box);
+			convert_gpu_output_float(dst, src_data_f, _box, VoxelBuffer::CHANNEL_SDF);
+			break;
+
+		case VoxelGenerator::ShaderOutput::TYPE_DATA5:
+			convert_gpu_output_float(dst, src_data_f, _box, VoxelBuffer::CHANNEL_DATA5);
+			break;
+
+		case VoxelGenerator::ShaderOutput::TYPE_DATA6:
+			convert_gpu_output_float(dst, src_data_f, _box, VoxelBuffer::CHANNEL_DATA6);
+			break;
+
+		case VoxelGenerator::ShaderOutput::TYPE_DATA7:
+			convert_gpu_output_float(dst, src_data_f, _box, VoxelBuffer::CHANNEL_DATA7);
 			break;
 
 		case VoxelGenerator::ShaderOutput::TYPE_SINGLE_TEXTURE:
@@ -441,9 +492,14 @@ void GenerateBlockGPUTask::collect(GPUTaskContext &ctx) {
 	StdVector<GenerateBlockGPUTaskResult> results;
 	results.reserve(_boxes_data.size());
 
-	// Get span for that specific task
-	Span<const uint8_t> outputs_bytes = to_span(ctx.downloaded_shared_output_data)
-												.sub(ctx.shared_output_buffer_begin, ctx.shared_output_buffer_size);
+	const Span<const uint8_t> downloaded_bytes = to_span(ctx.downloaded_shared_output_data);
+	const bool readback_valid = ctx.shared_output_buffer_begin <= downloaded_bytes.size() &&
+			ctx.shared_output_buffer_size <= downloaded_bytes.size() - ctx.shared_output_buffer_begin;
+	const bool success = _prepared && readback_valid;
+	Span<const uint8_t> outputs_bytes;
+	if (success) {
+		outputs_bytes = downloaded_bytes.sub(ctx.shared_output_buffer_begin, ctx.shared_output_buffer_size);
+	}
 
 	unsigned int box_offset = 0;
 
@@ -454,7 +510,8 @@ void GenerateBlockGPUTask::collect(GPUTaskContext &ctx) {
 		// Every output is the same size for now
 		const unsigned int size_per_output = Vector3iUtil::get_volume_u64(box.size) * sizeof(float);
 
-		for (unsigned int output_index = 0; output_index < generator_shader_outputs->outputs.size(); ++output_index) {
+		for (unsigned int output_index = 0; success && output_index < generator_shader_outputs->outputs.size();
+			 ++output_index) {
 			const VoxelGenerator::ShaderOutput &output_info = generator_shader_outputs->outputs[output_index];
 
 			GenerateBlockGPUTaskResult result(
@@ -469,12 +526,23 @@ void GenerateBlockGPUTask::collect(GPUTaskContext &ctx) {
 			results.push_back(result);
 		}
 
-		box_offset += size_per_output * generator_shader_outputs->outputs.size();
+		if (success) {
+			box_offset += size_per_output * generator_shader_outputs->outputs.size();
+		}
 
-		storage_buffer_pool.recycle(bd.params_sb);
+		if (!bd.params_sb.is_null()) {
+			storage_buffer_pool.recycle(bd.params_sb);
+		}
+#ifdef VOXEL_ENABLE_MODIFIERS
+		if (!bd.modifier_params_sb.is_null()) {
+			storage_buffer_pool.recycle(bd.modifier_params_sb);
+		}
+#endif
 	}
 
-	zylann::godot::free_rendering_device_rid(rd, _generator_pipeline_rid);
+	if (_generator_pipeline_rid.is_valid()) {
+		zylann::godot::free_rendering_device_rid(rd, _generator_pipeline_rid);
+	}
 
 	for (const RID &rid : _modifier_pipelines) {
 		zylann::godot::free_rendering_device_rid(rd, rid);
@@ -486,7 +554,13 @@ void GenerateBlockGPUTask::collect(GPUTaskContext &ctx) {
 
 	// We leave conversion to the CPU task, because we have only one thread for GPU work and it only exists for waiting
 	// blocking functions, not doing work
-	consumer_task->set_gpu_results(std::move(results));
+	if (success) {
+		consumer_task->set_gpu_results(std::move(results));
+	} else {
+		ZN_PRINT_ERROR_ONCE("GPU voxel generation failed during preparation or readback. Retrying affected blocks on "
+							"the CPU; check preceding shader or RenderingDevice errors.");
+		consumer_task->set_gpu_failed();
+	}
 
 	// Resume meshing task, pass ownership back to the task runner.
 	VoxelEngine::get_singleton().push_async_task(consumer_task);

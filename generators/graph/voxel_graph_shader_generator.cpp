@@ -86,11 +86,24 @@ CompilationResult generate_shader(
 
 	codegen.add("void generate(vec3 pos");
 
+	FixedArray<bool, 3> data_outputs_seen;
+	fill(data_outputs_seen, false);
 	for (const uint32_t node_id : order) {
 		const ProgramGraph::Node &node = expanded_graph.get_node(node_id);
 		const NodeType &node_type = type_db.get_type(node.type_id);
 
 		if (node_type.category == CATEGORY_OUTPUT) {
+			if (node.type_id >= VoxelGraphFunction::NODE_OUTPUT_DATA5 &&
+				node.type_id <= VoxelGraphFunction::NODE_OUTPUT_DATA7) {
+				const unsigned int i = node.type_id - VoxelGraphFunction::NODE_OUTPUT_DATA5;
+				if (data_outputs_seen[i]) {
+					CompilationResult error = CompilationResult::make_error(
+							"Multiple outputs for the same data channel are not supported.");
+					error.node_id = node_id;
+					return error;
+				}
+				data_outputs_seen[i] = true;
+			}
 			switch (node.type_id) {
 				case VoxelGraphFunction::NODE_OUTPUT_SDF:
 					codegen.add(", out float out_sd");
@@ -103,6 +116,18 @@ CompilationResult generate_shader(
 				case VoxelGraphFunction::NODE_OUTPUT_TYPE:
 					codegen.add(", out float out_type");
 					outputs.push_back(ShaderOutput{ ShaderOutput::TYPE_TYPE });
+					break;
+				case VoxelGraphFunction::NODE_OUTPUT_DATA5:
+					codegen.add(", out float out_data5");
+					outputs.push_back(ShaderOutput{ ShaderOutput::TYPE_DATA5 });
+					break;
+				case VoxelGraphFunction::NODE_OUTPUT_DATA6:
+					codegen.add(", out float out_data6");
+					outputs.push_back(ShaderOutput{ ShaderOutput::TYPE_DATA6 });
+					break;
+				case VoxelGraphFunction::NODE_OUTPUT_DATA7:
+					codegen.add(", out float out_data7");
+					outputs.push_back(ShaderOutput{ ShaderOutput::TYPE_DATA7 });
 					break;
 				default:
 					ZN_PRINT_WARNING(
@@ -193,6 +218,21 @@ CompilationResult generate_shader(
 					codegen.add_format("out_type = {};\n", it->second);
 				} else {
 					codegen.add_format("out_type = {};\n", float(node.default_inputs[0]));
+				}
+				continue;
+			}
+			case VoxelGraphFunction::NODE_OUTPUT_DATA5:
+			case VoxelGraphFunction::NODE_OUTPUT_DATA6:
+			case VoxelGraphFunction::NODE_OUTPUT_DATA7: {
+				const int channel = 5 + static_cast<int>(node.type_id) - VoxelGraphFunction::NODE_OUTPUT_DATA5;
+				const ProgramGraph::Port &input_port = node.inputs[0];
+				if (input_port.connections.size() > 0) {
+					ZN_ASSERT(input_port.connections.size() == 1);
+					auto it = port_to_var.find(input_port.connections[0]);
+					ZN_ASSERT(it != port_to_var.end());
+					codegen.add_format("out_data{} = {};\n", channel, it->second);
+				} else {
+					codegen.add_format("out_data{} = {};\n", channel, float(node.default_inputs[0]));
 				}
 				continue;
 			}

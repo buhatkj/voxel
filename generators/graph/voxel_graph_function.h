@@ -22,6 +22,9 @@ struct ShaderOutput {
 		TYPE_SDF,
 		TYPE_SINGLE_TEXTURE,
 		TYPE_TYPE,
+		TYPE_DATA5,
+		TYPE_DATA6,
+		TYPE_DATA7,
 	};
 	Type type;
 };
@@ -98,6 +101,9 @@ public:
 		NODE_RELAY,
 		NODE_SPOTS_2D,
 		NODE_SPOTS_3D,
+		NODE_OUTPUT_DATA5,
+		NODE_OUTPUT_DATA6,
+		NODE_OUTPUT_DATA7,
 
 	// Optional features down (to avoid diffs in docs when building both versions)
 	// Keep in mind this enum's values should not be used in persistent context (saves)

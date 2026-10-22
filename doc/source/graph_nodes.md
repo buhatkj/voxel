@@ -353,6 +353,24 @@ Inputs: `value`
 
 Sets the value of the custom output having the same name as the node. May be used in [VoxelGraphFunction](api/VoxelGraphFunction.md). It won't be used in [VoxelGeneratorGraph](api/VoxelGeneratorGraph.md).
 
+### OutputData5
+
+Inputs: `data5`
+
+Sets the floating-point value of CHANNEL_DATA5 of the current voxel, for custom fields such as slope. Supports CPU and GPU generation. Only one output for this channel is allowed. Uses the same encoding as VoxelBuffer.set_voxel_f: 8-bit and 16-bit depths quantize and clamp values, while 32-bit and 64-bit depths store floating-point values. Graph calculations and GPU outputs use 32-bit floats. This output is not skipped in air or solid regions. An OutputSDF or OutputType is still required.
+
+### OutputData6
+
+Inputs: `data6`
+
+Sets the floating-point value of CHANNEL_DATA6 of the current voxel, for custom fields such as moisture. Supports CPU and GPU generation. Only one output for this channel is allowed. Uses the same encoding as VoxelBuffer.set_voxel_f: 8-bit and 16-bit depths quantize and clamp values, while 32-bit and 64-bit depths store floating-point values. Graph calculations and GPU outputs use 32-bit floats. This output is not skipped in air or solid regions. An OutputSDF or OutputType is still required.
+
+### OutputData7
+
+Inputs: `data7`
+
+Sets the floating-point value of CHANNEL_DATA7 of the current voxel, for custom fields such as temperature. Supports CPU and GPU generation. Only one output for this channel is allowed. Uses the same encoding as VoxelBuffer.set_voxel_f: 8-bit and 16-bit depths quantize and clamp values, while 32-bit and 64-bit depths store floating-point values. Graph calculations and GPU outputs use 32-bit floats. This output is not skipped in air or solid regions. An OutputSDF or OutputType is still required.
+
 ### OutputSDF
 
 Inputs: `sdf`
@@ -464,4 +482,3 @@ Inputs: `x`, `y`, `z`
 Outputs: `nx`, `ny`, `nz`, `len`
 
 Returns the normalized coordinates of the given `(x, y, z)` 3D vector, such that the length of the output vector is 1.
-

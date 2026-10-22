@@ -5,6 +5,25 @@ namespace zylann::voxel::pg {
 void register_output_nodes(Span<NodeType> types) {
 	using namespace math;
 
+	const VoxelGraphFunction::NodeTypeID data_output_types[] = { VoxelGraphFunction::NODE_OUTPUT_DATA5,
+																 VoxelGraphFunction::NODE_OUTPUT_DATA6,
+																 VoxelGraphFunction::NODE_OUTPUT_DATA7 };
+	const char *data_output_names[] = { "OutputData5", "OutputData6", "OutputData7" };
+	const char *data_input_names[] = { "data5", "data6", "data7" };
+	for (unsigned int i = 0; i < 3; ++i) {
+		NodeType &t = types[data_output_types[i]];
+		t.name = data_output_names[i];
+		t.category = CATEGORY_OUTPUT;
+		t.inputs.push_back(NodeType::Port(data_input_names[i]));
+		t.outputs.push_back(NodeType::Port("_out"));
+		t.process_buffer_func = [](Runtime::ProcessBufferContext &ctx) {
+			const Runtime::Buffer &input = ctx.get_input(0);
+			Runtime::Buffer &out = ctx.get_output(0);
+			memcpy(out.data, input.data, input.size * sizeof(float));
+		};
+		t.range_analysis_func = [](Runtime::RangeAnalysisContext &ctx) { ctx.set_output(0, ctx.get_input(0)); };
+	}
+
 	{
 		NodeType &t = types[VoxelGraphFunction::NODE_OUTPUT_SDF];
 		t.name = "OutputSDF";

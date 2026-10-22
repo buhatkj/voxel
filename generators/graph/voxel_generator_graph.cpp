@@ -91,6 +91,11 @@ int VoxelGeneratorGraph::get_used_channels_mask() const {
 	if (runtime_ptr->type_output_index != -1) {
 		mask |= (1 << VoxelBuffer::CHANNEL_TYPE);
 	}
+	for (unsigned int i = 0; i < runtime_ptr->data_outputs.size(); ++i) {
+		if (runtime_ptr->data_outputs[i].output_index != -1) {
+			mask |= (1 << (VoxelBuffer::CHANNEL_DATA5 + i));
+		}
+	}
 	if (runtime_ptr->weight_outputs_count > 0 || runtime_ptr->single_texture_output_index != -1) {
 		switch (_texture_mode) {
 			case TEXTURE_MODE_MIXEL4:
@@ -831,6 +836,22 @@ VoxelGenerator::Result VoxelGeneratorGraph::generate_block(VoxelGenerator::Voxel
 					}
 				}
 
+				FixedArray<bool, 3> data_is_uniform;
+				fill(data_is_uniform, true);
+				for (unsigned int i = 0; i < runtime_ptr->data_outputs.size(); ++i) {
+					const Runtime::DataOutput &output = runtime_ptr->data_outputs[i];
+					if (output.buffer_index == -1) {
+						continue;
+					}
+					const math::Interval range = cache.state.get_range(output.buffer_index);
+					if (range.is_single_value()) {
+						out_buffer.fill_area_f(range.min, rmin, rmax, VoxelBuffer::CHANNEL_DATA5 + i);
+					} else {
+						data_is_uniform[i] = false;
+						required_outputs.push_back(output.output_index);
+					}
+				}
+
 				if (runtime_ptr->weight_outputs_count > 0 && !sdf_is_air) {
 					// We can skip this when SDF is air because there won't be any matter to give a texture to
 					// TODO Range analysis on that?
@@ -934,6 +955,25 @@ VoxelGenerator::Result VoxelGeneratorGraph::generate_block(VoxelGenerator::Voxel
 						fill_zx_integer_slice(
 								type_buffer, out_buffer, type_channel, type_channel_depth, rmin, rmax, ry
 						);
+					}
+
+					for (unsigned int i = 0; i < runtime_ptr->data_outputs.size(); ++i) {
+						if (data_is_uniform[i]) {
+							continue;
+						}
+						const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + i;
+						const VoxelBuffer::Depth depth = out_buffer.get_channel_depth(channel);
+						const pg::Runtime::Buffer &buffer =
+								cache.state.get_buffer(runtime_ptr->data_outputs[i].buffer_index);
+						// Use the same float encoding as VoxelBuffer::set_voxel_f, without SDF clipping.
+						fill_zx_sdf_slice(buffer,
+										  out_buffer,
+										  channel,
+										  depth,
+										  VoxelBuffer::get_sdf_quantization_scale(depth),
+										  rmin,
+										  rmax,
+										  ry);
 					}
 
 					if (runtime_ptr->single_texture_output_index != -1 && !single_texture_is_uniform) {
@@ -1073,6 +1113,18 @@ bool VoxelGeneratorGraph::generate_broad_block(VoxelGenerator::VoxelQueryData in
 		}
 	}
 
+	for (unsigned int i = 0; i < runtime_ptr->data_outputs.size(); ++i) {
+		const Runtime::DataOutput &output = runtime_ptr->data_outputs[i];
+		if (output.buffer_index == -1) {
+			continue;
+		}
+		const math::Interval range = cache.state.get_range(output.buffer_index);
+		if (!range.is_single_value()) {
+			return false;
+		}
+		out_buffer.fill_f(range.min, VoxelBuffer::CHANNEL_DATA5 + i);
+	}
+
 	// We can skip this when SDF is air because there won't be any matter to give a texture to
 	if (runtime_ptr->weight_outputs_count > 0 && !sdf_is_air) {
 		return false;
@@ -1120,6 +1172,28 @@ pg::CompilationResult VoxelGeneratorGraph::compile(bool debug) {
 	// voxels based on 3D coordinates and some other attributes. So we expect specific inputs and outputs to be used.
 
 	ERR_FAIL_COND_V(_main_function.is_null(), pg::CompilationResult::make_error("Main function not defined"));
+
+	// Check before optimization can merge identical output nodes.
+	FixedArray<bool, 3> data_outputs_seen;
+	fill(data_outputs_seen, false);
+	pg::CompilationResult data_output_validation = pg::CompilationResult::make_success();
+	_main_function->get_graph().for_each_node_const([&](const ProgramGraph::Node &node) {
+		if (node.type_id < pg::VoxelGraphFunction::NODE_OUTPUT_DATA5 ||
+			node.type_id > pg::VoxelGraphFunction::NODE_OUTPUT_DATA7) {
+			return;
+		}
+		const unsigned int i = node.type_id - pg::VoxelGraphFunction::NODE_OUTPUT_DATA5;
+		if (data_outputs_seen[i]) {
+			data_output_validation.success = false;
+			data_output_validation.message =
+					String(ZN_TTR("Multiple outputs for DATA{0} are not supported")).format(varray(5 + i));
+			data_output_validation.node_id = node.id;
+		}
+		data_outputs_seen[i] = true;
+	});
+	if (!data_output_validation.success) {
+		return data_output_validation;
+	}
 
 	const int64_t time_before = Time::get_singleton()->get_ticks_usec();
 
@@ -1239,6 +1313,23 @@ pg::CompilationResult VoxelGeneratorGraph::compile(bool debug) {
 					r->type_output_buffer_index = output.buffer_address;
 				}
 				break;
+
+			case pg::VoxelGraphFunction::NODE_OUTPUT_DATA5:
+			case pg::VoxelGraphFunction::NODE_OUTPUT_DATA6:
+			case pg::VoxelGraphFunction::NODE_OUTPUT_DATA7: {
+				const unsigned int i = node.type_id - pg::VoxelGraphFunction::NODE_OUTPUT_DATA5;
+				Runtime::DataOutput &data_output = r->data_outputs[i];
+				if (data_output.buffer_index != -1) {
+					pg::CompilationResult error;
+					error.success = false;
+					error.message =
+							String(ZN_TTR("Multiple outputs for DATA{0} are not supported")).format(varray(5 + i));
+					error.node_id = output.node_id;
+					return error;
+				}
+				data_output.output_index = output_index;
+				data_output.buffer_index = output.buffer_address;
+			} break;
 
 			case pg::VoxelGraphFunction::NODE_OUTPUT_SINGLE_TEXTURE:
 				if (r->single_texture_output_buffer_index != -1) {
@@ -1400,6 +1491,11 @@ void VoxelGeneratorGraph::generate_series(
 			break;
 		case VoxelBuffer::CHANNEL_TYPE:
 			buffer_index = runtime_ptr->type_output_buffer_index;
+			break;
+		case VoxelBuffer::CHANNEL_DATA5:
+		case VoxelBuffer::CHANNEL_DATA6:
+		case VoxelBuffer::CHANNEL_DATA7:
+			buffer_index = runtime_ptr->data_outputs[channel - VoxelBuffer::CHANNEL_DATA5].buffer_index;
 			break;
 		default:
 			ZN_PRINT_ERROR("Unexpected channel");
@@ -2022,6 +2118,15 @@ bool VoxelGeneratorGraph::get_shader_source(ShaderSourceData &out_data) const {
 			case pg::ShaderOutput::TYPE_TYPE:
 				out.type = ShaderOutput::TYPE_TYPE;
 				break;
+			case pg::ShaderOutput::TYPE_DATA5:
+				out.type = ShaderOutput::TYPE_DATA5;
+				break;
+			case pg::ShaderOutput::TYPE_DATA6:
+				out.type = ShaderOutput::TYPE_DATA6;
+				break;
+			case pg::ShaderOutput::TYPE_DATA7:
+				out.type = ShaderOutput::TYPE_DATA7;
+				break;
 			default:
 				ZN_PRINT_ERROR(format("Unsupported output for voxel generator shader generation ({})", output.type));
 				return false;
@@ -2076,6 +2181,14 @@ VoxelSingleValue VoxelGeneratorGraph::generate_single(Vector3i position, unsigne
 
 		case VoxelBuffer::CHANNEL_TYPE: {
 			v.i = L::query(*runtime_ptr, position, runtime_ptr->type_output_buffer_index);
+		} break;
+
+		case VoxelBuffer::CHANNEL_DATA5:
+		case VoxelBuffer::CHANNEL_DATA6:
+		case VoxelBuffer::CHANNEL_DATA7: {
+			v.f = L::query(*runtime_ptr,
+						   position,
+						   runtime_ptr->data_outputs[channel - VoxelBuffer::CHANNEL_DATA5].buffer_index);
 		} break;
 
 		case VoxelBuffer::CHANNEL_INDICES: {

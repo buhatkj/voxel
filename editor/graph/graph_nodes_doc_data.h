@@ -8,7 +8,7 @@ struct Node {
     const char *description;
 };
 
-static const unsigned int COUNT = 59;
+static const unsigned int COUNT = 62;
 static const Node g_data[COUNT] = {
     {"Abs", "Math", "If [code]x[/code] is negative, returns [code]x[/code] as a positive number. Otherwise, returns [code]x[/code]."},
     {"Add", "Ops", "Returns the sum of [code]a[/code] and [code]b[/code]"},
@@ -44,6 +44,9 @@ static const Node g_data[COUNT] = {
     {"Noise2D", "Noise", "Returns 2D noise at coordinates `(x, y)` using one of the [url=Noise]Noise[/url] subclasses provided by Godot."},
     {"Noise3D", "Noise", "Returns 3D noise at coordinates `(x, y, z)` using one of the [url=Noise]Noise[/url] subclasses provided by Godot."},
     {"Normalize", "Vector", "Returns the normalized coordinates of the given [code](x, y, z)[/code] 3D vector, such that the length of the output vector is 1."},
+    {"OutputData5", "Output", "Sets the floating-point value of CHANNEL_DATA5 of the current voxel, for custom fields such as slope. Supports CPU and GPU generation. Only one output for this channel is allowed. Uses the same encoding as VoxelBuffer.set_voxel_f: 8-bit and 16-bit depths quantize and clamp values, while 32-bit and 64-bit depths store floating-point values. Graph calculations and GPU outputs use 32-bit floats. This output is not skipped in air or solid regions. An OutputSDF or OutputType is still required."},
+    {"OutputData6", "Output", "Sets the floating-point value of CHANNEL_DATA6 of the current voxel, for custom fields such as moisture. Supports CPU and GPU generation. Only one output for this channel is allowed. Uses the same encoding as VoxelBuffer.set_voxel_f: 8-bit and 16-bit depths quantize and clamp values, while 32-bit and 64-bit depths store floating-point values. Graph calculations and GPU outputs use 32-bit floats. This output is not skipped in air or solid regions. An OutputSDF or OutputType is still required."},
+    {"OutputData7", "Output", "Sets the floating-point value of CHANNEL_DATA7 of the current voxel, for custom fields such as temperature. Supports CPU and GPU generation. Only one output for this channel is allowed. Uses the same encoding as VoxelBuffer.set_voxel_f: 8-bit and 16-bit depths quantize and clamp values, while 32-bit and 64-bit depths store floating-point values. Graph calculations and GPU outputs use 32-bit floats. This output is not skipped in air or solid regions. An OutputSDF or OutputType is still required."},
     {"OutputSDF", "Output", "Sets the Signed Distance Field value of the current voxel."},
     {"OutputSingleTexture", "Output", "Sets the texture index of the current voxel. This is an alternative to using [code]OutputWeight[/code] nodes, if your voxels only have one texture. This is easier to use but does not allow for long gradients. Using this node in combination with [code]OutputWeight[/code] is not supported."},
     {"OutputType", "Output", "Sets the TYPE index of the current voxel. This is for use with [url=VoxelMesherBlocky]VoxelMesherBlocky[/url]. If you use this output, you don't need to use [code]OutputSDF[/code]."},

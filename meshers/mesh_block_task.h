@@ -46,6 +46,7 @@ public:
 
 #ifdef VOXEL_ENABLE_GPU
 	void set_gpu_results(StdVector<GenerateBlockGPUTaskResult> &&results) override;
+	void set_gpu_failed() override;
 #endif
 
 	static int debug_get_running_count();

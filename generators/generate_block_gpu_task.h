@@ -46,6 +46,8 @@ class IGeneratingVoxelsThreadedTask : public IThreadedTask {
 public:
 	// Called when the GPU task is complete.
 	virtual void set_gpu_results(StdVector<GenerateBlockGPUTaskResult> &&results) = 0;
+	// Resume on the CPU if GPU compilation, dispatch preparation, or readback failed.
+	virtual void set_gpu_failed() = 0;
 };
 
 // Generates a block of voxels on the GPU. Must be scheduled from a threaded task, which will be resumed when this one
@@ -80,10 +82,15 @@ public:
 #endif
 
 private:
+	bool _prepared = false;
 	struct BoxData {
 		GPUStorageBuffer params_sb;
 		Ref<RDUniform> params_uniform;
 		Ref<RDUniform> output_uniform;
+#ifdef VOXEL_ENABLE_MODIFIERS
+		GPUStorageBuffer modifier_params_sb;
+		Ref<RDUniform> modifier_params_uniform;
+#endif
 	};
 
 	StdVector<BoxData> _boxes_data;

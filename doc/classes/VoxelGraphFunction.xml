@@ -441,11 +441,20 @@
 		</constant>
 		<constant name="NODE_SPOTS_3D" value="56" enum="NodeTypeID">
 		</constant>
-		<constant name="NODE_TYPE_COUNT" value="59" enum="NodeTypeID">
+		<constant name="NODE_OUTPUT_DATA5" value="57" enum="NodeTypeID">
+			Writes a floating-point value to voxel channel DATA5.
 		</constant>
-		<constant name="NODE_FAST_NOISE_2_2D" value="57" enum="NodeTypeID">
+		<constant name="NODE_OUTPUT_DATA6" value="58" enum="NodeTypeID">
+			Writes a floating-point value to voxel channel DATA6.
 		</constant>
-		<constant name="NODE_FAST_NOISE_2_3D" value="58" enum="NodeTypeID">
+		<constant name="NODE_OUTPUT_DATA7" value="59" enum="NodeTypeID">
+			Writes a floating-point value to voxel channel DATA7.
+		</constant>
+		<constant name="NODE_TYPE_COUNT" value="62" enum="NodeTypeID">
+		</constant>
+		<constant name="NODE_FAST_NOISE_2_2D" value="60" enum="NodeTypeID">
+		</constant>
+		<constant name="NODE_FAST_NOISE_2_3D" value="61" enum="NodeTypeID">
 		</constant>
 	</constants>
 </class>

@@ -21,6 +21,17 @@
 #include "test_util.h"
 #include <sstream>
 
+#ifdef VOXEL_ENABLE_GPU
+#include "../../engine/voxel_engine.h"
+#include "../../generators/generate_block_gpu_task.h"
+#include "../../util/godot/classes/time.h"
+#include "../../util/godot/core/packed_arrays.h"
+#include <atomic>
+#ifdef VOXEL_ENABLE_MODIFIERS
+#include "../../modifiers/voxel_modifier_sphere.h"
+#endif
+#endif
+
 #ifdef VOXEL_ENABLE_FAST_NOISE_2
 #include "../../util/noise/fast_noise_2.h"
 #endif
@@ -123,6 +134,376 @@ void test_voxel_graph_generator_default_graph_compilation() {
 		ZN_TEST_ASSERT(check_graph_results_are_equal(**generator_debug, **generator));
 	}
 }
+
+void test_voxel_graph_data_outputs() {
+	const VoxelGraphFunction::NodeTypeID output_types[] = { VoxelGraphFunction::NODE_OUTPUT_DATA5,
+															VoxelGraphFunction::NODE_OUTPUT_DATA6,
+															VoxelGraphFunction::NODE_OUTPUT_DATA7 };
+	const VoxelGraphFunction::NodeTypeID input_types[] = { VoxelGraphFunction::NODE_INPUT_X,
+														   VoxelGraphFunction::NODE_INPUT_Y,
+														   VoxelGraphFunction::NODE_INPUT_Z };
+	const float scales[] = { 0.25f, -0.5f, 0.125f };
+	const Vector3i origin(-3, 2, -1);
+	const Vector3i size(8, 8, 8);
+
+	// Exercise varying, mixed uniform/varying, and entirely uniform data, even in clipped air/solid blocks.
+	for (unsigned int mode = 0; mode < 3; ++mode) {
+		Ref<VoxelGeneratorGraph> generator;
+		generator.instantiate();
+		Ref<VoxelGraphFunction> graph = generator->get_main_function();
+		const uint32_t sdf = graph->create_node(VoxelGraphFunction::NODE_OUTPUT_SDF);
+		graph->set_node_default_inputs_autoconnect(sdf, false);
+		graph->set_node_default_input(sdf, 0, mode == 1 ? -100.f : 100.f);
+
+		for (unsigned int i = 0; i < 3; ++i) {
+			const uint32_t output = graph->create_node(output_types[i]);
+			if (mode == 2 || (mode == 1 && i == 1)) {
+				graph->set_node_default_input(output, 0, 0.375f);
+			} else {
+				const uint32_t input = graph->create_node(input_types[i]);
+				const uint32_t multiply = graph->create_node(VoxelGraphFunction::NODE_MULTIPLY);
+				graph->add_connection(input, 0, multiply, 0);
+				graph->set_node_default_input(multiply, 1, scales[i]);
+				graph->add_connection(multiply, 0, output, 0);
+			}
+		}
+		const CompilationResult compilation = generator->compile(false);
+		ZN_TEST_ASSERT(compilation.success);
+		ZN_TEST_ASSERT(generator->get_used_channels_mask() ==
+					   ((1 << VoxelBuffer::CHANNEL_SDF) | (1 << VoxelBuffer::CHANNEL_DATA5) |
+						(1 << VoxelBuffer::CHANNEL_DATA6) | (1 << VoxelBuffer::CHANNEL_DATA7)));
+
+		for (unsigned int i = 0; i < 3; ++i) {
+			const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + i;
+			const float expected = mode == 2 || (mode == 1 && i == 1) ? 0.375f : origin[i] * scales[i];
+			ZN_TEST_ASSERT(generator->generate_single(origin, channel).f == expected);
+			const float xs[] = { -3.f, 0.f, 5.f };
+			const float ys[] = { 2.f, -1.f, 8.f };
+			const float zs[] = { -1.f, 4.f, 3.f };
+			float values[3];
+			generator->generate_series(Span<const float>(xs, 3),
+									   Span<const float>(ys, 3),
+									   Span<const float>(zs, 3),
+									   channel,
+									   Span<float>(values, 3),
+									   Vector3f(-3, -1, -1),
+									   Vector3f(5, 8, 4));
+			const float *coordinates[] = { xs, ys, zs };
+			for (unsigned int j = 0; j < 3; ++j) {
+				const float expected_value =
+						mode == 2 || (mode == 1 && i == 1) ? 0.375f : coordinates[i][j] * scales[i];
+				ZN_TEST_ASSERT(values[j] == expected_value);
+			}
+		}
+
+		for (unsigned int depth_index = 0; depth_index < VoxelBuffer::DEPTH_COUNT; ++depth_index) {
+			const VoxelBuffer::Depth depth = static_cast<VoxelBuffer::Depth>(depth_index);
+			for (unsigned int options = 0; options < 8; ++options) {
+				generator->set_use_optimized_execution_map((options & 1) != 0);
+				generator->set_use_subdivision((options & 2) != 0);
+				generator->set_subdivision_size(4);
+				const unsigned int lod = (options & 4) != 0 ? 2 : 0;
+				VoxelBuffer voxels(VoxelBuffer::ALLOCATOR_DEFAULT);
+				VoxelBuffer expected(VoxelBuffer::ALLOCATOR_DEFAULT);
+				voxels.create(size);
+				expected.create(size);
+				voxels.fill(37, VoxelBuffer::CHANNEL_COLOR);
+				for (unsigned int i = 0; i < 3; ++i) {
+					voxels.set_channel_depth(VoxelBuffer::CHANNEL_DATA5 + i, depth);
+					expected.set_channel_depth(VoxelBuffer::CHANNEL_DATA5 + i, depth);
+				}
+				const VoxelGenerator::VoxelQueryData query{ voxels, origin, lod };
+				ZN_TEST_ASSERT(generator->generate_broad_block(query) == (mode == 2));
+				if (mode == 2) {
+					for (unsigned int i = 0; i < 3; ++i) {
+						const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + i;
+						ZN_TEST_ASSERT(voxels.get_voxel(Vector3i(), channel) ==
+									   VoxelBuffer::real_to_raw_voxel(0.375f, depth));
+					}
+				}
+				generator->generate_block(query);
+				Vector3i pos;
+				for (pos.z = 0; pos.z < size.z; ++pos.z) {
+					for (pos.x = 0; pos.x < size.x; ++pos.x) {
+						for (pos.y = 0; pos.y < size.y; ++pos.y) {
+							const Vector3i world_pos = origin + (pos << lod);
+							for (unsigned int i = 0; i < 3; ++i) {
+								const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + i;
+								const float value =
+										mode == 2 || (mode == 1 && i == 1) ? 0.375f : world_pos[i] * scales[i];
+								expected.set_voxel_f(value, pos, channel);
+								ZN_TEST_ASSERT(voxels.get_voxel(pos, channel) == expected.get_voxel(pos, channel));
+							}
+							ZN_TEST_ASSERT(voxels.get_voxel(pos, VoxelBuffer::CHANNEL_COLOR) == 37);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+void test_voxel_graph_data_output_validation() {
+	const VoxelGraphFunction::NodeTypeID types[] = { VoxelGraphFunction::NODE_OUTPUT_DATA5,
+													 VoxelGraphFunction::NODE_OUTPUT_DATA6,
+													 VoxelGraphFunction::NODE_OUTPUT_DATA7 };
+	for (unsigned int i = 0; i < 3; ++i) {
+		Ref<VoxelGeneratorGraph> generator;
+		generator.instantiate();
+		Ref<VoxelGraphFunction> graph = generator->get_main_function();
+		graph->create_node(VoxelGraphFunction::NODE_OUTPUT_SDF);
+		const uint32_t output = graph->create_node(types[i]);
+		ZN_TEST_ASSERT(generator->compile(false).success);
+		ZN_TEST_ASSERT(generator->get_used_channels_mask() ==
+					   ((1 << VoxelBuffer::CHANNEL_SDF) | (1 << (VoxelBuffer::CHANNEL_DATA5 + i))));
+		for (unsigned int j = 0; j < 3; ++j) {
+			const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + j;
+			ZN_TEST_ASSERT(generator->generate_single(Vector3i(), channel).f == 0.f);
+			const float coordinates[] = { 0.f, 1.f };
+			float values[] = { -1.f, -1.f };
+			generator->generate_series(Span<const float>(coordinates, 2),
+									   Span<const float>(coordinates, 2),
+									   Span<const float>(coordinates, 2),
+									   channel,
+									   Span<float>(values, 2),
+									   Vector3f(),
+									   Vector3f(1, 1, 1));
+			ZN_TEST_ASSERT(values[0] == 0.f && values[1] == 0.f);
+		}
+		const uint32_t duplicate = graph->create_node(types[i]);
+		const CompilationResult result = generator->compile(false);
+		ZN_TEST_ASSERT(!result.success);
+		ZN_TEST_ASSERT(result.node_id == output || result.node_id == duplicate);
+		ZN_TEST_ASSERT(!result.message.is_empty());
+	}
+}
+
+#ifdef VOXEL_ENABLE_GPU
+void test_voxel_graph_data_outputs_gpu() {
+	Ref<VoxelGeneratorGraph> generator;
+	generator.instantiate();
+	Ref<VoxelGraphFunction> graph = generator->get_main_function();
+	graph->create_node(VoxelGraphFunction::NODE_OUTPUT_SDF);
+	const uint32_t x = graph->create_node(VoxelGraphFunction::NODE_INPUT_X);
+	const uint32_t y = graph->create_node(VoxelGraphFunction::NODE_INPUT_Y);
+	const uint32_t out5 = graph->create_node(VoxelGraphFunction::NODE_OUTPUT_DATA5);
+	const uint32_t out6 = graph->create_node(VoxelGraphFunction::NODE_OUTPUT_DATA6);
+	const uint32_t out7 = graph->create_node(VoxelGraphFunction::NODE_OUTPUT_DATA7);
+	graph->add_connection(x, 0, out5, 0);
+	graph->set_node_default_input(out6, 0, 0.375f);
+	graph->add_connection(y, 0, out7, 0);
+	ZN_TEST_ASSERT(generator->compile(false).success);
+	const VoxelGraphFunction::ShaderResult shader = graph->get_shader_source();
+	ZN_TEST_ASSERT(shader.compilation.success);
+	ZN_TEST_ASSERT(shader.code_utf8.find("out float out_data5") != StdString::npos);
+	ZN_TEST_ASSERT(shader.code_utf8.find("out float out_data6") != StdString::npos);
+	ZN_TEST_ASSERT(shader.code_utf8.find("out float out_data7") != StdString::npos);
+	ZN_TEST_ASSERT(shader.code_utf8.find("out_data6 = 0.375") != StdString::npos);
+	VoxelGenerator::ShaderSourceData source;
+	ZN_TEST_ASSERT(generator->get_shader_source(source));
+	ZN_TEST_ASSERT(source.outputs.size() == 4);
+
+	// Simulate the GPU's planar ZXY float output and exercise the actual readback/conversion path.
+	const Box3i box(Vector3i(1, 2, 1), Vector3i(3, 2, 4));
+	const unsigned int volume = Vector3iUtil::get_volume_u64(box.size);
+	for (unsigned int depth_index = 0; depth_index < VoxelBuffer::DEPTH_COUNT; ++depth_index) {
+		VoxelBuffer voxels(VoxelBuffer::ALLOCATOR_DEFAULT);
+		VoxelBuffer expected(VoxelBuffer::ALLOCATOR_DEFAULT);
+		voxels.create(Vector3i(6, 6, 6));
+		expected.create(voxels.get_size());
+		const VoxelBuffer::Depth depth = static_cast<VoxelBuffer::Depth>(depth_index);
+		for (unsigned int i = 0; i < 3; ++i) {
+			voxels.set_channel_depth(VoxelBuffer::CHANNEL_DATA5 + i, depth);
+			expected.set_channel_depth(VoxelBuffer::CHANNEL_DATA5 + i, depth);
+			voxels.fill_f(-2.f, VoxelBuffer::CHANNEL_DATA5 + i);
+			expected.fill_f(-2.f, VoxelBuffer::CHANNEL_DATA5 + i);
+		}
+		PackedByteArray bytes;
+		bytes.resize(source.outputs.size() * volume * sizeof(float));
+		Span<float> values = Span<uint8_t>(bytes.ptrw(), bytes.size()).reinterpret_cast_to<float>();
+		StdVector<GenerateBlockGPUTaskResult> results;
+		unsigned int data_outputs_count = 0;
+		for (unsigned int output_index = 0; output_index < source.outputs.size(); ++output_index) {
+			const VoxelGenerator::ShaderOutput::Type type = source.outputs[output_index].type;
+			unsigned int channel;
+			switch (type) {
+				case VoxelGenerator::ShaderOutput::TYPE_DATA5:
+					channel = VoxelBuffer::CHANNEL_DATA5;
+					break;
+				case VoxelGenerator::ShaderOutput::TYPE_DATA6:
+					channel = VoxelBuffer::CHANNEL_DATA6;
+					break;
+				case VoxelGenerator::ShaderOutput::TYPE_DATA7:
+					channel = VoxelBuffer::CHANNEL_DATA7;
+					break;
+				default:
+					continue;
+			}
+			++data_outputs_count;
+			Vector3i pos;
+			for (pos.z = 0; pos.z < box.size.z; ++pos.z) {
+				for (pos.x = 0; pos.x < box.size.x; ++pos.x) {
+					for (pos.y = 0; pos.y < box.size.y; ++pos.y) {
+						const Vector3i world_pos = box.position + pos;
+						const float value = channel == VoxelBuffer::CHANNEL_DATA5
+								? world_pos.x
+								: (channel == VoxelBuffer::CHANNEL_DATA6 ? 0.375f : world_pos.y);
+						values[output_index * volume + Vector3iUtil::get_zxy_index(pos, box.size)] = value;
+						expected.set_voxel_f(value, world_pos, channel);
+					}
+				}
+			}
+			results.push_back(GenerateBlockGPUTaskResult(
+					box,
+					type,
+					to_span(bytes).to_const().sub(output_index * volume * sizeof(float), volume * sizeof(float)),
+					bytes));
+		}
+		ZN_TEST_ASSERT(data_outputs_count == 3);
+		GenerateBlockGPUTaskResult::convert_to_voxel_buffer(to_span(results), voxels);
+		Vector3i pos;
+		for (pos.z = 0; pos.z < voxels.get_size().z; ++pos.z) {
+			for (pos.x = 0; pos.x < voxels.get_size().x; ++pos.x) {
+				for (pos.y = 0; pos.y < voxels.get_size().y; ++pos.y) {
+					for (unsigned int i = 0; i < 3; ++i) {
+						const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + i;
+						ZN_TEST_ASSERT(voxels.get_voxel(pos, channel) == expected.get_voxel(pos, channel));
+					}
+				}
+			}
+		}
+	}
+
+	struct DispatchState {
+		StdVector<GenerateBlockGPUTaskResult> results;
+		bool failed = false;
+		std::atomic_bool complete{ false };
+	};
+	struct ConsumerTask : IGeneratingVoxelsThreadedTask {
+		std::shared_ptr<DispatchState> state;
+
+		void set_gpu_results(StdVector<GenerateBlockGPUTaskResult> &&results) override {
+			state->results = std::move(results);
+		}
+
+		void set_gpu_failed() override {
+			state->failed = true;
+		}
+
+		void run(ThreadedTaskContext &) override {
+			state->complete.store(true);
+		}
+	};
+
+	VoxelEngine &engine = VoxelEngine::get_singleton();
+	engine.try_initialize_gpu_features();
+	generator->compile_shaders();
+	const VoxelGenerator::BlockRenderingShader shader_data = generator->get_block_rendering_shader_data();
+	ZN_TEST_ASSERT(shader_data.is_valid());
+	generator->invalidate_shaders();
+	const VoxelGenerator::BlockRenderingShader invalidated_data = generator->get_block_rendering_shader_data();
+	ZN_TEST_ASSERT(!invalidated_data.is_valid());
+	ZN_TEST_ASSERT(invalidated_data.shader == nullptr);
+	ZN_TEST_ASSERT(invalidated_data.parameters == nullptr);
+	ZN_TEST_ASSERT(invalidated_data.outputs == nullptr);
+	generator->compile_shaders();
+
+	std::shared_ptr<DispatchState> state = make_shared_instance<DispatchState>();
+	ConsumerTask *consumer = ZN_NEW(ConsumerTask);
+	consumer->state = state;
+	GenerateBlockGPUTask *task = ZN_NEW(GenerateBlockGPUTask);
+	task->consumer_task = consumer;
+	// A task keeps its coherent shader layout alive even when the generator is recompiled.
+	task->generator_shader = shader_data.shader;
+	task->generator_shader_params = shader_data.parameters;
+	task->generator_shader_outputs = shader_data.outputs;
+	task->origin_in_voxels = Vector3i(-3, 5, 7);
+	task->lod_index = 1;
+	task->boxes_to_generate.push_back(Box3i(Vector3i(1, 1, 1), Vector3i(3, 2, 3)));
+	task->boxes_to_generate.push_back(Box3i(Vector3i(0, 4, 0), Vector3i(2, 1, 2)));
+#ifdef VOXEL_ENABLE_MODIFIERS
+	VoxelModifierSphere modifier;
+	modifier.set_radius(100.f);
+	modifier.set_smoothness(1.f);
+	VoxelModifier::ShaderData modifier_data;
+	modifier.get_shader_data(modifier_data);
+	task->modifiers.push_back(modifier_data);
+#endif
+	const StdVector<Box3i> boxes = task->boxes_to_generate;
+	const Vector3i origin = task->origin_in_voxels;
+	const unsigned int lod = task->lod_index;
+	ZN_TEST_ASSERT(task->get_required_shared_output_buffer_size() == (18 + 4) * 4 * sizeof(float));
+	engine.push_gpu_task(task);
+
+	const uint64_t start_time = Time::get_singleton()->get_ticks_usec();
+	while (!state->complete.load()) {
+		Thread::sleep_usec(1000);
+		ZN_TEST_ASSERT(Time::get_singleton()->get_ticks_usec() - start_time < 10'000'000);
+	}
+	ZN_TEST_ASSERT(!state->failed);
+	ZN_TEST_ASSERT(state->results.size() == boxes.size() * source.outputs.size());
+	VoxelBuffer voxels(VoxelBuffer::ALLOCATOR_DEFAULT);
+	VoxelBuffer expected(VoxelBuffer::ALLOCATOR_DEFAULT);
+	voxels.create(Vector3i(6, 6, 6));
+	expected.create(voxels.get_size());
+	for (unsigned int i = 0; i < 3; ++i) {
+		const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + i;
+		voxels.set_channel_depth(channel, VoxelBuffer::DEPTH_32_BIT);
+		expected.set_channel_depth(channel, VoxelBuffer::DEPTH_32_BIT);
+		voxels.fill_f(-2.f, channel);
+		expected.fill_f(-2.f, channel);
+	}
+	for (const Box3i &generated_box : boxes) {
+		Vector3i pos;
+		for (pos.z = 0; pos.z < generated_box.size.z; ++pos.z) {
+			for (pos.x = 0; pos.x < generated_box.size.x; ++pos.x) {
+				for (pos.y = 0; pos.y < generated_box.size.y; ++pos.y) {
+					const Vector3i local_pos = generated_box.position + pos;
+					const Vector3i world_pos = origin + (local_pos << lod);
+					for (unsigned int i = 0; i < 3; ++i) {
+						const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + i;
+						expected.set_voxel_f(generator->generate_single(world_pos, channel).f, local_pos, channel);
+					}
+				}
+			}
+		}
+	}
+	GenerateBlockGPUTaskResult::convert_to_voxel_buffer(to_span(state->results), voxels);
+#ifdef VOXEL_ENABLE_MODIFIERS
+	ZN_TEST_ASSERT(voxels.get_voxel_f(boxes[0].position, VoxelBuffer::CHANNEL_SDF) < 0.f);
+#endif
+	Vector3i pos;
+	for (pos.z = 0; pos.z < voxels.get_size().z; ++pos.z) {
+		for (pos.x = 0; pos.x < voxels.get_size().x; ++pos.x) {
+			for (pos.y = 0; pos.y < voxels.get_size().y; ++pos.y) {
+				for (unsigned int i = 0; i < 3; ++i) {
+					const unsigned int channel = VoxelBuffer::CHANNEL_DATA5 + i;
+					ZN_TEST_ASSERT(voxels.get_voxel(pos, channel) == expected.get_voxel(pos, channel));
+				}
+			}
+		}
+	}
+
+	// Shader failures must resume the consumer without interpreting uninitialized GPU output.
+	std::shared_ptr<DispatchState> failure_state = make_shared_instance<DispatchState>();
+	ConsumerTask *failure_consumer = ZN_NEW(ConsumerTask);
+	failure_consumer->state = failure_state;
+	GenerateBlockGPUTask *failure_task = ZN_NEW(GenerateBlockGPUTask);
+	failure_task->consumer_task = failure_consumer;
+	failure_task->generator_shader = ComputeShaderFactory::create_invalid();
+	failure_task->generator_shader_params = shader_data.parameters;
+	failure_task->generator_shader_outputs = shader_data.outputs;
+	failure_task->boxes_to_generate.push_back(boxes[0]);
+	engine.push_gpu_task(failure_task);
+	const uint64_t failure_start_time = Time::get_singleton()->get_ticks_usec();
+	while (!failure_state->complete.load()) {
+		Thread::sleep_usec(1000);
+		ZN_TEST_ASSERT(Time::get_singleton()->get_ticks_usec() - failure_start_time < 10'000'000);
+	}
+	ZN_TEST_ASSERT(failure_state->failed);
+	ZN_TEST_ASSERT(failure_state->results.empty());
+}
+#endif
 
 void test_voxel_graph_invalid_connection() {
 	Ref<VoxelGraphFunction> graph;

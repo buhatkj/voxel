@@ -241,6 +241,13 @@ private:
 		int single_texture_output_index = -1;
 		int single_texture_output_buffer_index = -1;
 
+		struct DataOutput {
+			int output_index = -1;
+			int buffer_index = -1;
+		};
+		// Indexed by channel - CHANNEL_DATA5.
+		FixedArray<DataOutput, 3> data_outputs;
+
 		FixedArray<WeightOutput, 16> weight_outputs;
 		// List of indices to feed queries. The order doesn't matter, can be different from `weight_outputs`.
 		FixedArray<unsigned int, 16> weight_output_indices;

@@ -78,6 +78,11 @@ void run_voxel_tests(const testing::TestOptions &options) {
 	VOXEL_TEST(test_copy_3d_region_zxy);
 	VOXEL_TEST(test_voxel_graph_invalid_connection);
 	VOXEL_TEST(test_voxel_graph_generator_default_graph_compilation);
+	VOXEL_TEST(test_voxel_graph_data_outputs);
+	VOXEL_TEST(test_voxel_graph_data_output_validation);
+#ifdef VOXEL_ENABLE_GPU
+	VOXEL_TEST(test_voxel_graph_data_outputs_gpu);
+#endif
 	VOXEL_TEST(test_voxel_graph_sphere_on_plane);
 	VOXEL_TEST(test_voxel_graph_clamp_simplification);
 	VOXEL_TEST(test_voxel_graph_generator_expressions);

@@ -150,6 +150,20 @@ Picking a ridged fractal can also give an eroded look, although it requires to n
 More techniques can be found in the [Procedural Generation](procedural_generation.md) section.
 
 
+### Custom data channels
+
+`OutputData5`, `OutputData6`, and `OutputData7` write floating-point fields to `VoxelBuffer.CHANNEL_DATA5`, `CHANNEL_DATA6`, and `CHANNEL_DATA7`. They support both CPU and GPU generation. Connect any scalar graph result (noise, math, curves, or function outputs) to their `data5`, `data6`, or `data7` input. Each channel can have at most one output node; unconnected inputs default to zero. An `OutputSDF` or `OutputType` node is still required to define the terrain.
+
+For example, a planet graph can feed its sphere distance into `OutputSDF`, a slope calculation into `OutputData5`, moisture noise into `OutputData6`, and normalized temperature into `OutputData7`, matching the channel layout of `VoxelGeneratorPlanet`. Branch the calculated values before their output nodes to reuse them for material selection or other calculations.
+
+Values use the same encoding as `VoxelBuffer.set_voxel_f` and can be read with `get_voxel_f`. For continuous fields, configure these channels as 32-bit in the terrain's voxel format. The default 8-bit depth is a lossy, signed quantized format using the buffer's existing distance scale, not an unsigned `[0, 1]` byte encoding. 16-bit storage is also quantized; 32-bit and 64-bit storage preserve the graph's 32-bit float results without that quantization. Values are not automatically normalized or clamped to `[0, 1]` by the graph.
+
+Data outputs are generated even where the SDF is clipped to uniform air or solid. Range analysis can fill constant fields directly, but varying fields still require generation. GPU generation adds one float per voxel per data output to the shared GPU output buffer, then converts it to the destination channel's configured depth during readback. As with other graph outputs, GPU use requires all nodes feeding the output to support shader generation.
+
+GPU block tasks retain the shader, its parameters, and its output layout together, so graph recompilation cannot mix layouts from different graph versions. Tasks wait while that shader data is being replaced. If shader preparation or GPU readback fails, an error is logged and affected blocks are retried on the CPU rather than meshing uninitialized data.
+
+These nodes write newly calculated fields; they do not read existing channel data for procedural brushes. Use graph branches and function inputs to share intermediate calculations.
+
 ### Usage with blocky voxels
 
 It is possible to use this generator with `VoxelMesherBlocky` by using an `OutputType` node instead of `OutputSDF`. However, `VoxelMesherBlocky` expects voxels to be IDs, not SDF values.

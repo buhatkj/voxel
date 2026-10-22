@@ -97,6 +97,11 @@ std::shared_ptr<ComputeShader> VoxelGenerator::get_block_rendering_shader() {
 	}
 }
 
+VoxelGenerator::BlockRenderingShader VoxelGenerator::get_block_rendering_shader_data() {
+	MutexLock mlock(_shader_mutex);
+	return { _block_rendering_shader, _block_rendering_shader_parameters, _block_rendering_shader_outputs };
+}
+
 std::shared_ptr<ComputeShaderParameters> VoxelGenerator::get_block_rendering_shader_parameters() {
 	{
 		MutexLock mlock(_shader_mutex);

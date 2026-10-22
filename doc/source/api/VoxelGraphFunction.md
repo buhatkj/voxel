@@ -141,9 +141,21 @@ enum **NodeTypeID**:
 - <span id="i_NODE_RELAY"></span>**NODE_RELAY** = **54**
 - <span id="i_NODE_SPOTS_2D"></span>**NODE_SPOTS_2D** = **55**
 - <span id="i_NODE_SPOTS_3D"></span>**NODE_SPOTS_3D** = **56**
-- <span id="i_NODE_TYPE_COUNT"></span>**NODE_TYPE_COUNT** = **59**
-- <span id="i_NODE_FAST_NOISE_2_2D"></span>**NODE_FAST_NOISE_2_2D** = **57**
-- <span id="i_NODE_FAST_NOISE_2_3D"></span>**NODE_FAST_NOISE_2_3D** = **58**
+- <span id="i_NODE_OUTPUT_DATA5"></span>**NODE_OUTPUT_DATA5** = **57**
+
+Writes a floating-point value to voxel channel DATA5.
+
+- <span id="i_NODE_OUTPUT_DATA6"></span>**NODE_OUTPUT_DATA6** = **58**
+
+Writes a floating-point value to voxel channel DATA6.
+
+- <span id="i_NODE_OUTPUT_DATA7"></span>**NODE_OUTPUT_DATA7** = **59**
+
+Writes a floating-point value to voxel channel DATA7.
+
+- <span id="i_NODE_TYPE_COUNT"></span>**NODE_TYPE_COUNT** = **62**
+- <span id="i_NODE_FAST_NOISE_2_2D"></span>**NODE_FAST_NOISE_2_2D** = **60**
+- <span id="i_NODE_FAST_NOISE_2_3D"></span>**NODE_FAST_NOISE_2_3D** = **61**
 
 
 ## Property Descriptions
