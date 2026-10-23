@@ -11,7 +11,8 @@
 #endif
 
 #ifdef VOXEL_ENABLE_GPU
-#include "../../../shaders/fast_noise_lite_shader.h"
+#include "../../../shaders/shaders.h"
+#include "../../../util/noise/fast_noise_lite/fast_noise_lite_shader.h"
 #endif
 
 namespace zylann::voxel::pg {
@@ -24,6 +25,9 @@ Variant create_resource_to_variant() {
 }
 
 #ifdef VOXEL_ENABLE_GPU
+
+using zylann::add_fast_noise_lite_gradient_state_config;
+using zylann::add_fast_noise_lite_state_config;
 
 int godot_domain_warp_to_fnl(FastNoiseLite::DomainWarpFractalType gd_domain_warp_type) {
 	switch (gd_domain_warp_type) {
@@ -81,57 +85,6 @@ void add_fast_noise_lite_state_config(ShaderGenContext &ctx, const FastNoiseLite
 				fnl.get_domain_warp_frequency(),
 				fnl.get_domain_warp_fractal_lacunarity()
 		);
-	}
-}
-
-void add_fast_noise_lite_gradient_state_config(ShaderGenContext &ctx, const ZN_FastNoiseLiteGradient &fnl) {
-	ctx.add_format(
-			"fnl_state warp_state = fnlCreateState({});\n"
-			"warp_state.domain_warp_type = {};\n"
-			"warp_state.domain_warp_amp = {};\n"
-			"warp_state.fractal_type = {};\n"
-			"warp_state.octaves = {};\n"
-			"warp_state.gain = {};\n"
-			"warp_state.frequency = {};\n"
-			"warp_state.lacunarity = {};\n",
-			fnl.get_seed(),
-			fnl.get_noise_type(),
-			fnl.get_amplitude(),
-			fnl.get_fractal_type_fnl(),
-			fnl.get_fractal_octaves(),
-			fnl.get_fractal_gain(),
-			1.0 / fnl.get_period(),
-			fnl.get_fractal_lacunarity()
-	);
-}
-
-void add_fast_noise_lite_state_config(ShaderGenContext &ctx, const ZN_FastNoiseLite &fnl) {
-	// TODO Add missing options
-	ctx.add_format(
-			"fnl_state state = fnlCreateState({});\n"
-			"state.noise_type = {};\n"
-			"state.fractal_type = {};\n"
-			"state.octaves = {};\n"
-			"state.gain = {};\n"
-			"state.frequency = {};\n"
-			"state.lacunarity = {};\n"
-			"state.cellular_distance_func = {};\n"
-			"state.cellular_return_type = {};\n"
-			"state.cellular_jitter_mod = {};\n",
-			fnl.get_seed(),
-			fnl.get_noise_type(),
-			fnl.get_fractal_type(),
-			fnl.get_fractal_octaves(),
-			fnl.get_fractal_gain(),
-			1.0 / fnl.get_period(),
-			fnl.get_fractal_lacunarity(),
-			fnl.get_cellular_distance_function(),
-			fnl.get_cellular_return_type(),
-			fnl.get_cellular_jitter()
-	);
-	Ref<ZN_FastNoiseLiteGradient> fnlg = fnl.get_warp_noise();
-	if (fnlg.is_valid()) {
-		add_fast_noise_lite_gradient_state_config(ctx, **fnlg);
 	}
 }
 

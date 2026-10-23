@@ -27,6 +27,10 @@
 #include "voxel/test_voxel_instancer.h"
 #include "voxel/test_voxel_mesher_cubes.h"
 
+#ifdef VOXEL_ENABLE_BASIC_GENERATORS
+#include "voxel/test_voxel_generator_planet.h"
+#endif
+
 #ifdef VOXEL_ENABLE_SMOOTH_MESHING
 #include "voxel/test_transvoxel.h"
 #ifdef VOXEL_ENABLE_GPU
@@ -80,6 +84,12 @@ void run_voxel_tests(const testing::TestOptions &options) {
 	VOXEL_TEST(test_voxel_graph_generator_default_graph_compilation);
 	VOXEL_TEST(test_voxel_graph_data_outputs);
 	VOXEL_TEST(test_voxel_graph_data_output_validation);
+#ifdef VOXEL_ENABLE_BASIC_GENERATORS
+	VOXEL_TEST(test_voxel_generator_planet_large_coordinates);
+#ifdef VOXEL_ENABLE_GPU
+	VOXEL_TEST(test_voxel_generator_planet_gpu);
+#endif
+#endif
 #ifdef VOXEL_ENABLE_GPU
 	VOXEL_TEST(test_voxel_graph_data_outputs_gpu);
 #endif

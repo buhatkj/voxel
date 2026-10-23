@@ -184,11 +184,23 @@ public:
 
 	int get_used_channels_mask() const override;
 
+#ifdef VOXEL_ENABLE_GPU
+	bool supports_shaders() const override {
+		return true;
+	}
+
+	bool get_shader_source(ShaderSourceData &out_data) const override;
+#endif
+
 private:
 	static void _bind_methods();
 
 	void _on_height_noise_changed();
 	void _on_detail_noise_changed();
+
+#ifdef VOXEL_ENABLE_GPU
+	void _on_changed();
+#endif
 
 private:
 	// Proper references used for external access.

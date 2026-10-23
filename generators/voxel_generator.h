@@ -148,6 +148,9 @@ public:
 		// followed by outputs like `out float out_sd, ...`, which determines what will be returned by the
 		// compute shader.
 		StdVector<ShaderOutput> outputs;
+		// Adds a float voxel_size argument after position. Block shaders pass the LOD stride;
+		// detail rendering passes 1, matching CPU series generation.
+		bool uses_voxel_size = false;
 	};
 
 	struct ShaderOutputs {

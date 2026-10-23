@@ -5,6 +5,12 @@
 #include "../../util/math/funcs.h"
 #include "../../util/noise/fast_noise_lite/fast_noise_lite.h"
 
+#ifdef VOXEL_ENABLE_GPU
+#include "../../shaders/shaders.h"
+#include "../../util/noise/fast_noise_lite/fast_noise_lite_shader.h"
+#include "../graph/code_gen_helper.h"
+#endif
+
 #ifdef ZN_GODOT
 #include "../../util/godot/core/callable_mp.h"
 #include "../../util/godot/core/class_db.h"
@@ -104,6 +110,10 @@ VoxelGeneratorPlanet::VoxelGeneratorPlanet() {
 	Ref<ZN_FastNoiseLite> noise;
 	noise.instantiate();
 	set_height_noise(noise);
+#ifdef VOXEL_ENABLE_GPU
+	// Setters above emit changed before this resource has an owning reference.
+	connect(VoxelStringNames::get_singleton().changed, callable_mp(this, &VoxelGeneratorPlanet::_on_changed));
+#endif
 }
 
 VoxelGeneratorPlanet::~VoxelGeneratorPlanet() {
@@ -653,6 +663,174 @@ int VoxelGeneratorPlanet::get_used_channels_mask() const {
 		   (1 << VoxelBuffer::CHANNEL_DATA7);
 }
 
+#ifdef VOXEL_ENABLE_GPU
+
+void VoxelGeneratorPlanet::_on_changed() {
+	invalidate_shaders();
+}
+
+bool VoxelGeneratorPlanet::get_shader_source(ShaderSourceData &out_data) const {
+	Parameters params;
+	{
+		RWLockRead rlock(_parameters_lock);
+		params = _parameters;
+	}
+
+	CodeGenHelper code;
+	const auto add_constant = [&code](const char *constant_name, float value) {
+		code.add_format("const float {} = {};\n", constant_name, value);
+	};
+	add_constant("planet_radius", params.radius);
+	add_constant("planet_height_amplitude", params.height_noise_amplitude);
+	add_constant("planet_detail_amplitude", params.detail_noise_amplitude);
+	add_constant("planet_slope_lo_out_rad", params.slope_lo_out_rad);
+	add_constant("planet_slope_lo_in_rad", params.slope_lo_in_rad);
+	add_constant("planet_slope_hi_in_rad", params.slope_hi_in_rad);
+	add_constant("planet_slope_hi_out_rad", params.slope_hi_out_rad);
+	add_constant("planet_slope_lo_out_cos", params.slope_lo_out_cos);
+	add_constant("planet_slope_lo_in_cos", params.slope_lo_in_cos);
+	add_constant("planet_slope_hi_in_cos", params.slope_hi_in_cos);
+	add_constant("planet_slope_hi_out_cos", params.slope_hi_out_cos);
+	add_constant("planet_water_radius", float(params.moisture_water_table_radius));
+	add_constant("planet_moisture_distance", params.moisture_max_distance);
+	add_constant("planet_atmosphere_thickness", float(params.atmosphere_thickness));
+	add_constant("planet_temperature_min", params.temperature_min_surface_temperature);
+	add_constant("planet_temperature_max", params.temperature_max_surface_temperature);
+	add_constant("planet_temperature_scale", 1.f / MAX_TEMPERATURE_KELVIN);
+
+	const auto add_noise = [&code](const char *function_name, const Ref<ZN_FastNoiseLite> &noise) {
+		code.add_format("float {}(vec3 pos) {\n", function_name);
+		if (noise.is_valid()) {
+			code.require_lib_code("vg_fnl", g_fast_noise_lite_shader);
+			add_fast_noise_lite_state_config(code, **noise);
+			if (noise->get_warp_noise().is_valid()) {
+				code.add("fnlDomainWarp3D(warp_state, pos.x, pos.y, pos.z);\n");
+			}
+			code.add("return fnlGetNoise3D(state, pos.x, pos.y, pos.z);\n");
+		} else {
+			code.add("return 0.0;\n");
+		}
+		code.add("}\n");
+	};
+	add_noise(
+			"planet_height_noise",
+			params.height_noise_amplitude != 0.f ? params.height_noise : Ref<ZN_FastNoiseLite>()
+	);
+	add_noise("planet_detail_noise", params.detail_noise_enabled ? params.detail_noise : Ref<ZN_FastNoiseLite>());
+
+	// Match this fork's Math::Fast_Sqrt approximation rather than shifting the existing planet surface.
+	code.add(R"(
+float planet_distance(vec3 pos) {
+	float d2 = dot(pos, pos);
+	float inv = intBitsToFloat(0x5f3759df - (floatBitsToInt(d2) >> 1));
+	inv = inv * (1.5 - 0.5 * d2 * inv * inv);
+	return d2 * inv;
+}
+
+float planet_base_sdf(vec3 pos) {
+	return planet_distance(pos) + 0.0001 - planet_radius
+		- planet_height_amplitude * planet_height_noise(pos);
+}
+
+float planet_slope_weight(vec3 pos, float stride) {
+	vec3 gradient = vec3(
+		planet_base_sdf(pos + vec3(stride, 0.0, 0.0)) - planet_base_sdf(pos - vec3(stride, 0.0, 0.0)),
+		planet_base_sdf(pos + vec3(0.0, stride, 0.0)) - planet_base_sdf(pos - vec3(0.0, stride, 0.0)),
+		planet_base_sdf(pos + vec3(0.0, 0.0, stride)) - planet_base_sdf(pos - vec3(0.0, 0.0, stride))
+	);
+	float g_len2 = dot(gradient, gradient);
+	float p_len2 = dot(pos, pos);
+	float cosine = 1.0;
+	if (g_len2 > 1e-12 && p_len2 > 1e-12) {
+		cosine = clamp(dot(gradient, pos) / sqrt(g_len2 * p_len2), -1.0, 1.0);
+	}
+	if (cosine <= planet_slope_lo_in_cos && cosine >= planet_slope_hi_in_cos) {
+		return 1.0;
+	}
+	if (cosine > planet_slope_lo_in_cos) {
+		if (cosine >= planet_slope_lo_out_cos) {
+			return 0.0;
+		}
+		return clamp((acos(cosine) - planet_slope_lo_out_rad)
+			/ (planet_slope_lo_in_rad - planet_slope_lo_out_rad), 0.0, 1.0);
+	}
+	if (cosine <= planet_slope_hi_out_cos) {
+		return 0.0;
+	}
+	return clamp((planet_slope_hi_out_rad - acos(cosine))
+		/ (planet_slope_hi_out_rad - planet_slope_hi_in_rad), 0.0, 1.0);
+}
+
+void generate(vec3 pos, float stride, out float out_sd,
+		out float out_data5, out float out_data6, out float out_data7) {
+	float base_sdf = planet_base_sdf(pos);
+	out_data5 = 0.0;
+	out_data6 = 0.0;
+	out_data7 = 0.0;
+)");
+	if (params.detail_noise_enabled) {
+		code.add(R"(
+	if (abs(base_sdf) <= planet_detail_amplitude + 2.0 * stride) {
+		out_data5 = planet_slope_weight(pos, stride);
+	}
+)");
+	}
+	code.add("out_sd = base_sdf;\n");
+	if (params.detail_noise_enabled && params.detail_noise.is_valid() && params.detail_noise_amplitude > 0.f) {
+		code.add(R"(
+	float amplitude = planet_detail_amplitude * clamp(out_data5, 0.0, 1.0);
+	if (amplitude > 0.0) {
+		out_sd -= amplitude * planet_detail_noise(pos);
+	}
+)");
+	}
+	if (params.moisture_enabled && params.moisture_max_distance > 0.f) {
+		code.add(R"(
+	float moisture_t = abs(planet_distance(pos) - planet_water_radius) / planet_moisture_distance;
+	if (moisture_t < 1.0) {
+		out_data6 = (exp(-5.0 * moisture_t) - 0.006737947) / (1.0 - 0.006737947);
+	}
+)");
+	}
+	if (params.temperature_blend_by_latitude_altitude_enabled) {
+		code.add(R"(
+	float t_min = min(planet_temperature_min, planet_temperature_max);
+	float t_max = max(planet_temperature_min, planet_temperature_max);
+)");
+		if (params.radius <= 0.f) {
+			code.add("out_data7 = clamp(planet_temperature_max, t_min, t_max) * planet_temperature_scale;\n");
+		} else {
+			code.add(R"(
+	float latitude_t = clamp(abs(pos.y) / planet_radius, 0.0, 1.0);
+	float altitude_t = 0.0;
+)");
+			if (params.atmosphere_thickness > 0) {
+				code.add(R"(
+	altitude_t = clamp((planet_distance(pos) - planet_radius) / planet_atmosphere_thickness, 0.0, 1.0);
+)");
+			}
+			code.add(R"(
+	float t = clamp(latitude_t + altitude_t, 0.0, 1.0);
+	float kelvin = planet_temperature_max + (planet_temperature_min - planet_temperature_max) * t;
+	out_data7 = clamp(kelvin, t_min, t_max) * planet_temperature_scale;
+)");
+		}
+	}
+	code.add("}\n");
+	out_data.glsl = String::utf8(code.print().c_str());
+	out_data.parameters.clear();
+	out_data.outputs = {
+		{ ShaderOutput::TYPE_SDF },
+		{ ShaderOutput::TYPE_DATA5 },
+		{ ShaderOutput::TYPE_DATA6 },
+		{ ShaderOutput::TYPE_DATA7 }
+	};
+	out_data.uses_voxel_size = true;
+	return true;
+}
+
+#endif
+
 VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::VoxelQueryData input) {
 	VoxelBuffer &out_buffer = input.voxel_buffer;
 
@@ -670,8 +848,6 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 
 	const bool has_any_data =
 			params.detail_noise_enabled || params.moisture_enabled || params.temperature_blend_by_latitude_altitude_enabled;
-	const ZN_FastNoiseLite *height_noise = params.height_noise.is_valid() ? &**params.height_noise : nullptr;
-	const float height_noise_amp = params.height_noise_amplitude;
 
 	int gz = input.origin_in_voxels.z;
 	for (int z = 0; z < bs.z; ++z, gz += stride) {
@@ -679,11 +855,7 @@ VoxelGenerator::Result VoxelGeneratorPlanet::generate_block(VoxelGenerator::Voxe
 		for (int x = 0; x < bs.x; ++x, gx += stride) {
 			int gy = input.origin_in_voxels.y;
 			for (int y = 0; y < bs.y; ++y, gy += stride) {
-				const float d = Math::Fast_Sqrt(float(gx * gx + gy * gy + gz * gz)) + 0.0001f;
-				float base_sdf = d - params.radius;
-				if (height_noise != nullptr && height_noise_amp != 0.f) {
-					base_sdf -= height_noise_amp * height_noise->get_noise_3d(gx, gy, gz);
-				}
+				const float base_sdf = _base_sdf(float(gx), float(gy), float(gz), params);
 
 				const float slope_weight = _compute_detail_noise_slope_mask(gx, gy, gz, base_sdf, stride_f, params);
 

@@ -7,7 +7,7 @@ Generators
 How generators work
 ----------------------
 
-Generators currently run on the CPU and primarily work on blocks of voxels. For example, given a `VoxelBuffer` of 16x16x16 voxels, they decide what value each one will take. Using blocks makes it easier to split the work across multiple threads, and focus only on the area the player is located, especially if the world is infinite.
+Generators primarily work on blocks of voxels, using the CPU or, for supported generators, GPU compute shaders. For example, given a `VoxelBuffer` of 16x16x16 voxels, they decide what value each one will take. Using blocks makes it easier to split the work across multiple threads, and focus only on the area the player is located, especially if the world is infinite.
 
 Voxel data is split into various channels, so depending on the kind of volume to generate, one or more different channels will be used. For example, a Minecraft generator will likely use the `TYPE` channel for voxel types, while a smooth terrain generator will use the `SDF` channel to fill in distance field values.
 
@@ -31,6 +31,16 @@ The module provides several built-in generators. They are simple examples to get
 Some of these generators have an option to choose which channel they will work on. If you use a smooth mesher, use the `SDF` channel (1), otherwise use the `TYPE` channel (0).
 
 The following screenshots use a smooth `VoxelLodTerrain`.
+
+### Planet
+
+`VoxelGeneratorPlanet` generates a spherical planet with height noise and slope-attenuated detail noise. It writes the distance field to `CHANNEL_SDF`, the detail slope mask to `CHANNEL_DATA5`, water-table proximity to `CHANNEL_DATA6`, and normalized surface temperature to `CHANNEL_DATA7`. Disabled data features output zero.
+
+Enable `use_gpu_generation` on `VoxelLodTerrain` or `VoxelTerrain` (through `set_generator_use_gpu(true)` in code) to generate planet blocks with the module's existing Vulkan compute pipeline. This requires a build with voxel GPU support and a working Vulkan rendering device. Otherwise the existing CPU path is used. Direct `generate_block`, single-value, and series queries still run on the CPU.
+
+GPU generation supports the `ZN_FastNoiseLite` noise types, fractals, 3D rotations, and domain warping for both height and detail noise. The slope mask uses the block's LOD voxel stride, just as CPU generation does. GPU detail rendering is also supported, using a unit stride like CPU series generation. Floating-point results may differ slightly between CPU and GPU.
+
+Changing planet parameters or either noise resource, including nested warp noise, invalidates cached shaders so the terrain recompiles them on demand. Existing blocks must still be regenerated using the terrain's usual workflow to reflect parameter changes.
 
 ### [Flat](api/VoxelGeneratorFlat.md)
 

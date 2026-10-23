@@ -277,6 +277,8 @@ def get_sources(env, is_editor_build):
         sources += [
             "generators/simple/*.cpp",
         ]
+        if tests_enabled:
+            sources += ["tests/voxel/test_voxel_generator_planet.cpp"]
 
     if voxel_mesh_sdf_enabled:
         env.Append(CPPDEFINES={"VOXEL_ENABLE_MESH_SDF": 1})
