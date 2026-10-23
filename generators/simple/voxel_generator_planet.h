@@ -74,7 +74,7 @@ private:
 };
 
 // Generates a spherical planet SDF from noise, along with procedural data channels
-// (slope mask, water table proximity, surface temperature).
+// (slope mask, moisture, surface temperature).
 class VoxelGeneratorPlanet : public VoxelGenerator {
 	GDCLASS(VoxelGeneratorPlanet, VoxelGenerator)
 
@@ -105,6 +105,15 @@ public:
 
 	void set_moisture_max_distance(float distance);
 	float get_moisture_max_distance() const;
+
+	void set_moisture_climate_enabled(bool enabled);
+	bool is_moisture_climate_enabled() const;
+
+	void set_moisture_upwind_sample_count(int count);
+	int get_moisture_upwind_sample_count() const;
+
+	void set_moisture_upwind_search_distance(float distance);
+	float get_moisture_upwind_search_distance() const;
 
 	void set_temperature_blend_by_latitude_altitude_enabled(bool enabled);
 	bool is_temperature_blend_by_latitude_altitude_enabled() const;
@@ -221,9 +230,12 @@ private:
 		float slope_hi_in_cos = -1.f;
 		float slope_hi_out_cos = -1.f;
 
-		// When enabled, moisture is saturated at/below the water table and fades linearly with height above it.
+		// Sea-level saturation fades linearly above the water table, optionally combined with climate wetness.
 		bool moisture_enabled = false;
 		float moisture_max_distance = 1.f;
+		bool moisture_climate_enabled = false;
+		int moisture_upwind_sample_count = 8;
+		float moisture_upwind_search_distance = 1000.f;
 
 		// When enabled, surface temperature is blended by latitude and altitude.
 		bool temperature_blend_by_latitude_altitude_enabled = false;
@@ -288,8 +300,13 @@ private:
 			const Parameters &params
 	) const;
 
-	// Moisture is 1 at/below the water table and fades linearly above it, or 0 when disabled.
+	// Maximum of sea-level saturation and optional procedural climate wetness, or 0 when disabled.
 	float _compute_moisture(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
+
+	// Coarse elevation from height noise sampled on the nominal sphere, without detail noise.
+	float _sample_climate_surface_radius(Vector3f direction, const Parameters &params) const;
+
+	float _compute_climate_moisture(Vector3f direction, const Parameters &params) const;
 
 	// Normalized surface temperature, or 0 when disabled.
 	float _compute_temperature(float pos_x, float pos_y, float pos_z, const Parameters &params) const;

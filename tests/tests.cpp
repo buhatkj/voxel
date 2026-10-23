@@ -23,6 +23,7 @@
 #include "voxel/test_storage_funcs.h"
 #include "voxel/test_voxel_buffer.h"
 #include "voxel/test_voxel_data_map.h"
+#include "voxel/test_voxel_generator_planet.h"
 #include "voxel/test_voxel_graph.h"
 #include "voxel/test_voxel_instancer.h"
 #include "voxel/test_voxel_mesher_cubes.h"
@@ -126,6 +127,10 @@ void run_voxel_tests(const testing::TestOptions &options) {
 	VOXEL_TEST(test_octree_find_in_box);
 	VOXEL_TEST(test_get_curve_monotonic_sections);
 	VOXEL_TEST(test_voxel_buffer_create);
+	VOXEL_TEST(test_voxel_generator_planet_moisture);
+	VOXEL_TEST(test_voxel_generator_planet_climate);
+	VOXEL_TEST(test_voxel_generator_planet_rain_shadow);
+	VOXEL_TEST(test_voxel_generator_planet_climate_generation_paths);
 	VOXEL_TEST(test_block_serializer);
 	VOXEL_TEST(test_block_serializer_stream_peer);
 	VOXEL_TEST(test_region_file);

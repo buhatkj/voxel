@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VoxelGeneratorPlanet" inherits="VoxelGenerator" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Generates spherical terrain with slope, moisture and temperature data.
+	</brief_description>
+	<description>
+		Moisture is stored in [constant VoxelBuffer.CHANNEL_DATA6]. It represents normalized wetness, not atmospheric humidity or a simulated water volume.
+		Optional climate is evaluated directly from the planet's settings and terrain noise. It requires no baking, additional resource, loaded neighboring chunks or additional voxel channels.
+		Climate uses the local Y axis as the polar axis, matching the temperature model. Rainfall and wind belts approximate an Earth-like climate; they are not an atmospheric simulation and do not respond to rotation speed or atmospheric composition.
+		Coarse surface elevation is estimated by sampling height noise on the nominal sphere. Detail noise and terrain edits are ignored; this estimate may differ from the actual surface when height displacement is large or changes rapidly in the radial direction.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="moisture_enabled" type="bool" setter="set_moisture_enabled" getter="is_moisture_enabled" default="false">
+			Enables moisture output. When disabled, moisture is zero, including below sea level.
+		</member>
+		<member name="moisture_water_table_radius" type="int" setter="set_moisture_water_table_radius" getter="get_moisture_water_table_radius" default="0">
+			Sea-level radius in voxel units. Moisture is one at or below this radius. Climate also uses this level to classify sampled terrain as ocean or land.
+		</member>
+		<member name="moisture_max_distance" type="float" setter="set_moisture_max_distance" getter="get_moisture_max_distance" default="1.0">
+			Distance above sea level over which the sea-level moisture contribution fades linearly to zero. Zero disables this contribution above sea level, without affecting saturation below it or optional climate wetness.
+		</member>
+		<member name="moisture_climate_enabled" type="bool" setter="set_moisture_climate_enabled" getter="is_moisture_climate_enabled" default="false">
+			Combines the sea-level contribution with procedural climate wetness by taking their maximum. Climate uses latitude rainfall belts, temperature-based drying and optional upwind ocean and mountain sampling. The temperature minimum/maximum and atmosphere thickness settings are used even when temperature channel output is disabled.
+			Climate is evaluated at an estimated surface elevation, so its contribution is constant along a radial column. It is a static wetness approximation, not a depth-dependent soil or groundwater simulation. Requires a positive planet radius.
+		</member>
+		<member name="moisture_upwind_sample_count" type="int" setter="set_moisture_upwind_sample_count" getter="get_moisture_upwind_sample_count" default="8">
+			Number of upwind terrain samples, clamped to 0 through 64. Zero skips ocean influence and rain shadows, retaining latitude rainfall and temperature drying. More samples improve detection of coasts and mountain barriers over the same search distance, at higher generation cost.
+			With height noise enabled, climate evaluates one local height-noise sample plus this many upwind samples per moisture query. Upwind sampling is skipped at the poles or when search distance is zero. No climate sampling is needed below sea level.
+		</member>
+		<member name="moisture_upwind_search_distance" type="float" setter="set_moisture_upwind_search_distance" getter="get_moisture_upwind_search_distance" default="1000.0">
+			Maximum upwind search distance in voxel units, measured along the nominal sphere. Limited internally to half the circumference, then tapered near poles and latitude-dependent wind reversals. Zero skips upwind sampling.
+			Changing this distance changes the geographic reach of ocean and mountain influence; changing sample count changes sampling resolution. Mountains and oceans beyond the search path cannot influence the result. Small features may be missed between samples.
+		</member>
+	</members>
+</class>

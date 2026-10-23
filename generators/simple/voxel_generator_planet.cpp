@@ -260,6 +260,45 @@ float VoxelGeneratorPlanet::get_moisture_max_distance() const {
 	return _parameters.moisture_max_distance;
 }
 
+void VoxelGeneratorPlanet::set_moisture_climate_enabled(bool enabled) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.moisture_climate_enabled = enabled;
+	}
+	emit_changed();
+}
+
+bool VoxelGeneratorPlanet::is_moisture_climate_enabled() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.moisture_climate_enabled;
+}
+
+void VoxelGeneratorPlanet::set_moisture_upwind_sample_count(int count) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.moisture_upwind_sample_count = math::clamp(count, 0, 64);
+	}
+	emit_changed();
+}
+
+int VoxelGeneratorPlanet::get_moisture_upwind_sample_count() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.moisture_upwind_sample_count;
+}
+
+void VoxelGeneratorPlanet::set_moisture_upwind_search_distance(float distance) {
+	{
+		RWLockWrite wlock(_parameters_lock);
+		_parameters.moisture_upwind_search_distance = math::max(distance, 0.f);
+	}
+	emit_changed();
+}
+
+float VoxelGeneratorPlanet::get_moisture_upwind_search_distance() const {
+	RWLockRead rlock(_parameters_lock);
+	return _parameters.moisture_upwind_search_distance;
+}
+
 void VoxelGeneratorPlanet::set_temperature_blend_by_latitude_altitude_enabled(bool enabled) {
 	{
 		RWLockWrite wlock(_parameters_lock);
@@ -591,15 +630,86 @@ float VoxelGeneratorPlanet::_compute_moisture(float pos_x, float pos_y, float po
 	if (height_above_water_table <= 0.f) {
 		return 1.f;
 	}
-	const float max_distance = params.moisture_max_distance;
-	if (max_distance <= 0.f) {
-		return 0.f;
+	float moisture = 0.f;
+	if (params.moisture_max_distance > 0.f) {
+		moisture = math::max(1.f - height_above_water_table / params.moisture_max_distance, 0.f);
 	}
-	const float t = height_above_water_table / max_distance;
-	if (t >= 1.f) {
-		return 0.f;
+	if (params.moisture_climate_enabled && params.radius > 0.f && d > 0.f) {
+		const Vector3f direction = math::normalized(Vector3f(pos_x, pos_y, pos_z));
+		moisture = math::max(moisture, _compute_climate_moisture(direction, params));
 	}
-	return 1.f - t;
+	return moisture;
+}
+
+float VoxelGeneratorPlanet::_sample_climate_surface_radius(Vector3f direction, const Parameters &params) const {
+	float radius = params.radius;
+	if (params.height_noise.is_valid() && params.height_noise_amplitude != 0.f) {
+		const Vector3f p = direction * params.radius;
+		radius += params.height_noise_amplitude * params.height_noise->get_noise_3d(p.x, p.y, p.z);
+	}
+	return math::max(radius, 0.f);
+}
+
+float VoxelGeneratorPlanet::_compute_climate_moisture(Vector3f direction, const Parameters &params) const {
+	// Y is the polar axis, matching the existing surface-temperature model.
+	const float latitude_sine = math::clamp(Math::abs(direction.y), 0.f, 1.f);
+	const float latitude = Math::asin(latitude_sine);
+	const float latitude_squared = latitude_sine * latitude_sine;
+	const float rainfall =
+			(0.55f + 0.35f * Math::cos(6.f * latitude)) *
+			(1.f - 0.65f * latitude_squared * latitude_squared);
+	const float surface_radius = _sample_climate_surface_radius(direction, params);
+	const float sea_level = float(params.moisture_water_table_radius);
+	float altitude_t = 0.f;
+	if (params.atmosphere_thickness > 0) {
+		altitude_t = math::clamp(
+				(surface_radius - params.radius) / float(params.atmosphere_thickness), 0.f, 1.f
+		);
+	}
+	// Climate uses temperature settings even when output to DATA7 is disabled.
+	const float temperature_t = math::clamp(latitude_sine + altitude_t, 0.f, 1.f);
+	const float temperature_kelvin =
+			params.temperature_max_surface_temperature +
+			(params.temperature_min_surface_temperature - params.temperature_max_surface_temperature) * temperature_t;
+	const float drying = math::clamp((temperature_kelvin - 273.15f) / 40.f, 0.f, 1.f);
+	float rainfall_multiplier = 1.f;
+
+	const int sample_count = params.moisture_upwind_sample_count;
+	const float horizontal_length = Math::sqrt(direction.x * direction.x + direction.z * direction.z);
+	if (sample_count > 0 && params.moisture_upwind_search_distance > 0.f && horizontal_length > 0.0001f) {
+		const Vector3f east(-direction.z / horizontal_length, 0.f, direction.x / horizontal_length);
+		// Trade winds, westerlies and polar easterlies. Taper the path continuously at poles and wind reversals.
+		const float upwind_sign = Math::cos(6.f * latitude);
+		const float search_angle =
+				math::min(params.moisture_upwind_search_distance / params.radius, math::PI<float>);
+		const float angle = search_angle * upwind_sign * horizontal_length;
+		const float inland_drying_per_sample =
+				0.35f * Math::abs(angle) / (0.5f * math::PI<float> * float(sample_count));
+		const float relief = math::max(Math::abs(params.height_noise_amplitude), 1.f);
+		float air_moisture = 0.5f;
+		float barrier_radius = sea_level;
+		float previous_radius = surface_radius;
+		// Walk from the farthest point toward the query. An ocean source resets earlier inland barriers.
+		for (int i = sample_count; i > 0; --i) {
+			const float sample_angle = angle * float(i) / float(sample_count);
+			const Vector3f sample_direction =
+					direction * Math::cos(sample_angle) + east * Math::sin(sample_angle);
+			const float sample_radius = _sample_climate_surface_radius(sample_direction, params);
+			if (sample_radius <= sea_level) {
+				air_moisture = 1.f;
+				barrier_radius = sea_level;
+			} else {
+				air_moisture = math::max(air_moisture - inland_drying_per_sample, 0.f);
+				barrier_radius = math::max(barrier_radius, sample_radius);
+			}
+			previous_radius = sample_radius;
+		}
+		const float shadow = math::clamp((barrier_radius - surface_radius) / relief, 0.f, 1.f);
+		const float uplift =
+				math::clamp((surface_radius - previous_radius) * float(sample_count) / relief, 0.f, 1.f);
+		rainfall_multiplier = 0.35f + 1.3f * air_moisture * (1.f - 0.85f * shadow) + 0.75f * uplift;
+	}
+	return math::clamp(rainfall * rainfall_multiplier / (0.5f + drying), 0.f, 1.f);
 }
 
 float VoxelGeneratorPlanet::_compute_temperature(float pos_x, float pos_y, float pos_z, const Parameters &params) const {
@@ -840,6 +950,25 @@ void VoxelGeneratorPlanet::_bind_methods() {
 	ClassDB::bind_method(
 			D_METHOD("get_moisture_max_distance"), &VoxelGeneratorPlanet::get_moisture_max_distance
 	);
+	ClassDB::bind_method(
+			D_METHOD("set_moisture_climate_enabled", "enabled"), &VoxelGeneratorPlanet::set_moisture_climate_enabled
+	);
+	ClassDB::bind_method(
+			D_METHOD("is_moisture_climate_enabled"), &VoxelGeneratorPlanet::is_moisture_climate_enabled
+	);
+	ClassDB::bind_method(
+			D_METHOD("set_moisture_upwind_sample_count", "count"), &VoxelGeneratorPlanet::set_moisture_upwind_sample_count
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_moisture_upwind_sample_count"), &VoxelGeneratorPlanet::get_moisture_upwind_sample_count
+	);
+	ClassDB::bind_method(
+			D_METHOD("set_moisture_upwind_search_distance", "distance"),
+			&VoxelGeneratorPlanet::set_moisture_upwind_search_distance
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_moisture_upwind_search_distance"), &VoxelGeneratorPlanet::get_moisture_upwind_search_distance
+	);
 
 	ClassDB::bind_method(
 			D_METHOD("set_temperature_blend_by_latitude_altitude_enabled", "enabled"),
@@ -994,6 +1123,23 @@ void VoxelGeneratorPlanet::_bind_methods() {
 			PropertyInfo(Variant::INT, "moisture_water_table_radius"),
 			"set_moisture_water_table_radius",
 			"get_moisture_water_table_radius"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::BOOL, "moisture_climate_enabled"),
+			"set_moisture_climate_enabled",
+			"is_moisture_climate_enabled"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::INT, "moisture_upwind_sample_count", PROPERTY_HINT_RANGE, "0,64,1"),
+			"set_moisture_upwind_sample_count",
+			"get_moisture_upwind_sample_count"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(
+					Variant::FLOAT, "moisture_upwind_search_distance", PROPERTY_HINT_RANGE, "0.0,10000.0,1.0,or_greater"
+			),
+			"set_moisture_upwind_search_distance",
+			"get_moisture_upwind_search_distance"
 	);
 	ADD_GROUP("Temperature", "temperature_");
 	ADD_PROPERTY(
