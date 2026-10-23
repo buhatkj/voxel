@@ -221,7 +221,7 @@ private:
 		float slope_hi_in_cos = -1.f;
 		float slope_hi_out_cos = -1.f;
 
-		// When enabled, moisture proximity is derived from the distance to the water table.
+		// When enabled, moisture is saturated at/below the water table and fades linearly with height above it.
 		bool moisture_enabled = false;
 		float moisture_max_distance = 1.f;
 
@@ -288,7 +288,7 @@ private:
 			const Parameters &params
 	) const;
 
-	// Water table proximity used for the moisture channel, or 0 when disabled.
+	// Moisture is 1 at/below the water table and fades linearly above it, or 0 when disabled.
 	float _compute_moisture(float pos_x, float pos_y, float pos_z, const Parameters &params) const;
 
 	// Normalized surface temperature, or 0 when disabled.

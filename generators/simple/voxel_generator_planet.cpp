@@ -586,19 +586,20 @@ float VoxelGeneratorPlanet::_compute_moisture(float pos_x, float pos_y, float po
 	if (!params.moisture_enabled) {
 		return 0.f;
 	}
+	const float d = Math::Fast_Sqrt(pos_x * pos_x + pos_y * pos_y + pos_z * pos_z);
+	const float height_above_water_table = d - float(params.moisture_water_table_radius);
+	if (height_above_water_table <= 0.f) {
+		return 1.f;
+	}
 	const float max_distance = params.moisture_max_distance;
 	if (max_distance <= 0.f) {
 		return 0.f;
 	}
-	const float d = Math::Fast_Sqrt(pos_x * pos_x + pos_y * pos_y + pos_z * pos_z);
-	const float t = Math::abs(d - float(params.moisture_water_table_radius)) / max_distance;
+	const float t = height_above_water_table / max_distance;
 	if (t >= 1.f) {
 		return 0.f;
 	}
-	// Exponential falloff, rescaled so it reaches exactly 0 at `max_distance`.
-	constexpr float k = 5.f;
-	constexpr float floor_value = 0.006737947f; // exp(-k)
-	return (Math::exp(-k * t) - floor_value) / (1.f - floor_value);
+	return 1.f - t;
 }
 
 float VoxelGeneratorPlanet::_compute_temperature(float pos_x, float pos_y, float pos_z, const Parameters &params) const {
