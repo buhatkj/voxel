@@ -595,10 +595,10 @@ void VoxelBlockyModel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_culls_neighbors"), &VoxelBlockyModel::get_culls_neighbors);
 
 	ClassDB::bind_method(D_METHOD("is_random_tickable"), &VoxelBlockyModel::is_random_tickable);
-	ClassDB::bind_method(D_METHOD("set_random_tickable"), &VoxelBlockyModel::set_random_tickable);
+	ClassDB::bind_method(D_METHOD("set_random_tickable", "enabled"), &VoxelBlockyModel::set_random_tickable);
 
 	ClassDB::bind_method(D_METHOD("get_tags_mask"), &VoxelBlockyModel::get_tags_mask);
-	ClassDB::bind_method(D_METHOD("set_tags_mask"), &VoxelBlockyModel::set_tags_mask);
+	ClassDB::bind_method(D_METHOD("set_tags_mask", "mask"), &VoxelBlockyModel::set_tags_mask);
 
 	ClassDB::bind_method(
 			D_METHOD("set_mesh_collision_enabled", "surface_index", "enabled"),

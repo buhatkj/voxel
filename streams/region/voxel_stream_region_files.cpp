@@ -931,9 +931,13 @@ void VoxelStreamRegionFiles::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_region_size_po2"), &VoxelStreamRegionFiles::get_region_size_po2);
 	ClassDB::bind_method(D_METHOD("get_sector_size"), &VoxelStreamRegionFiles::get_sector_size);
 
-	ClassDB::bind_method(D_METHOD("set_block_size_po2"), &VoxelStreamRegionFiles::set_block_size_po2);
-	ClassDB::bind_method(D_METHOD("set_region_size_po2"), &VoxelStreamRegionFiles::set_region_size_po2);
-	ClassDB::bind_method(D_METHOD("set_sector_size"), &VoxelStreamRegionFiles::set_sector_size);
+	ClassDB::bind_method(
+			D_METHOD("set_block_size_po2", "block_size_po2"), &VoxelStreamRegionFiles::set_block_size_po2
+	);
+	ClassDB::bind_method(
+			D_METHOD("set_region_size_po2", "region_size_po2"), &VoxelStreamRegionFiles::set_region_size_po2
+	);
+	ClassDB::bind_method(D_METHOD("set_sector_size", "sector_size"), &VoxelStreamRegionFiles::set_sector_size);
 
 	ClassDB::bind_method(D_METHOD("convert_files", "new_settings"), &VoxelStreamRegionFiles::convert_files);
 
