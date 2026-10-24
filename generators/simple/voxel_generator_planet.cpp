@@ -44,8 +44,6 @@ float VoxelPlanetAtmosphericGas::get_percentage() const {
 void VoxelPlanetAtmosphericGas::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_gas_name", "name"), &VoxelPlanetAtmosphericGas::set_gas_name);
 	ClassDB::bind_method(D_METHOD("get_gas_name"), &VoxelPlanetAtmosphericGas::get_gas_name);
-	ClassDB::bind_method(D_METHOD("set_name", "name"), &VoxelPlanetAtmosphericGas::set_name);
-	ClassDB::bind_method(D_METHOD("get_name"), &VoxelPlanetAtmosphericGas::get_name);
 	ClassDB::bind_method(D_METHOD("set_percentage", "percentage"), &VoxelPlanetAtmosphericGas::set_percentage);
 	ClassDB::bind_method(D_METHOD("get_percentage"), &VoxelPlanetAtmosphericGas::get_percentage);
 
@@ -86,8 +84,6 @@ float VoxelPlanetMineral::get_percentage() const {
 void VoxelPlanetMineral::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_mineral_name", "name"), &VoxelPlanetMineral::set_mineral_name);
 	ClassDB::bind_method(D_METHOD("get_mineral_name"), &VoxelPlanetMineral::get_mineral_name);
-	ClassDB::bind_method(D_METHOD("set_name", "name"), &VoxelPlanetMineral::set_name);
-	ClassDB::bind_method(D_METHOD("get_name"), &VoxelPlanetMineral::get_name);
 	ClassDB::bind_method(D_METHOD("set_percentage", "percentage"), &VoxelPlanetMineral::set_percentage);
 	ClassDB::bind_method(D_METHOD("get_percentage"), &VoxelPlanetMineral::get_percentage);
 

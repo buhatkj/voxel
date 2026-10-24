@@ -28,13 +28,6 @@ public:
 	void set_gas_name(const String &p_name);
 	String get_gas_name() const;
 
-	void set_name(const String &p_name) {
-		set_gas_name(p_name);
-	}
-	String get_name() const {
-		return get_gas_name();
-	}
-
 	void set_percentage(float p_percentage);
 	float get_percentage() const;
 
@@ -54,13 +47,6 @@ public:
 
 	void set_mineral_name(const String &p_name);
 	String get_mineral_name() const;
-
-	void set_name(const String &p_name) {
-		set_mineral_name(p_name);
-	}
-	String get_name() const {
-		return get_mineral_name();
-	}
 
 	void set_percentage(float p_percentage);
 	float get_percentage() const;
